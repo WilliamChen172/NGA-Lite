@@ -24,7 +24,9 @@ struct ThreadDetailView: View {
             isLoading: viewModel.isLoading,
             isEmpty: viewModel.posts.isEmpty,
             errorMessage: viewModel.errorMessage,
-            retryAction: { Task { await viewModel.loadThread(threadId: thread.tid) } }
+            retryAction: { Task { await viewModel.loadThread(threadId: thread.tid) } },
+            isLoginRequired: viewModel.isLoginRequired,
+            loginAction: { showLoginSheet = true }
         ) {
             ScrollView {
                 VStack(spacing: 0) {

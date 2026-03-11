@@ -12,20 +12,26 @@ struct ErrorStateView: View {
     let title: String
     let message: String
     let retryAction: (() -> Void)?
+    let primaryButtonTitle: String?
+    let primaryButtonAction: (() -> Void)?
 
-    init(title: String = "Failed to Load", message: String, retryAction: (() -> Void)? = nil) {
+    init(title: String = "加载失败", message: String, retryAction: (() -> Void)? = nil, primaryButtonTitle: String? = nil, primaryButtonAction: (() -> Void)? = nil) {
         self.title = title
         self.message = message
         self.retryAction = retryAction
+        self.primaryButtonTitle = primaryButtonTitle
+        self.primaryButtonAction = primaryButtonAction
     }
+
+    private var isLoginRequired: Bool { primaryButtonTitle == "去登录" }
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "exclamationmark.triangle")
+            Image(systemName: isLoginRequired ? "lock.fill" : "exclamationmark.triangle")
                 .font(.system(size: 48))
                 .foregroundStyle(.secondary)
 
-            Text(title)
+            Text(isLoginRequired ? "需要登录" : title)
                 .font(.headline)
 
             Text(message)
@@ -34,8 +40,10 @@ struct ErrorStateView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
 
-            if let retryAction {
-                Button("Retry", action: retryAction)
+            if let title = primaryButtonTitle, let action = primaryButtonAction {
+                Button(title, action: action)
+            } else if let retryAction {
+                Button("重试", action: retryAction)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

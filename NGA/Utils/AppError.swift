@@ -10,6 +10,7 @@ import Foundation
 enum AppError: LocalizedError {
     case network(underlying: Error)
     case unauthorized
+    case loginRequired
     case serverError(code: Int, message: String)
     case decodingFailed
     case unknown(Error)
@@ -20,6 +21,8 @@ enum AppError: LocalizedError {
             return "Network error: \(error.localizedDescription)"
         case .unauthorized:
             return "Unauthorized. Please log in again."
+        case .loginRequired:
+            return "此版块需要登录后查看"
         case .serverError(let code, let message):
             return "Server error (\(code)): \(message)"
         case .decodingFailed:

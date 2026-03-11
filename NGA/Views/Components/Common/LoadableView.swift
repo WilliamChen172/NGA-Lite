@@ -14,6 +14,8 @@ struct LoadableView<Content: View>: View {
     let errorMessage: String?
     let loadingMessage: String
     let retryAction: (() -> Void)?
+    let isLoginRequired: Bool
+    let loginAction: (() -> Void)?
     @ViewBuilder let content: () -> Content
 
     init(
@@ -22,6 +24,8 @@ struct LoadableView<Content: View>: View {
         errorMessage: String?,
         loadingMessage: String = "加载中...",
         retryAction: (() -> Void)? = nil,
+        isLoginRequired: Bool = false,
+        loginAction: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.isLoading = isLoading
@@ -29,6 +33,8 @@ struct LoadableView<Content: View>: View {
         self.errorMessage = errorMessage
         self.loadingMessage = loadingMessage
         self.retryAction = retryAction
+        self.isLoginRequired = isLoginRequired
+        self.loginAction = loginAction
         self.content = content
     }
 
@@ -39,8 +45,13 @@ struct LoadableView<Content: View>: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .background(AppTheme.Colors.pageBackground)
             } else if let error = errorMessage, isEmpty {
-                ErrorStateView(message: error, retryAction: retryAction)
-                    .background(AppTheme.Colors.pageBackground)
+                ErrorStateView(
+                    message: error,
+                    retryAction: isLoginRequired ? nil : retryAction,
+                    primaryButtonTitle: isLoginRequired ? "去登录" : nil,
+                    primaryButtonAction: isLoginRequired ? loginAction : nil
+                )
+                .background(AppTheme.Colors.pageBackground)
             } else {
                 content()
             }

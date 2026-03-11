@@ -73,8 +73,11 @@ actor APIClient {
         log.debug("[thread.php] POST fid=\(fid) page=\(page) -> \(url.absoluteString)")
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let msg = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) ?? ""
-            throw AppError.serverError(code: http.statusCode, message: String(msg.prefix(200)))
+            let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
+            if http.statusCode == 403, rawMsg.contains("未登录") || rawMsg.contains("登录") {
+                throw AppError.loginRequired
+            }
+            throw AppError.serverError(code: http.statusCode, message: String(rawMsg.prefix(200)))
         }
 
         let raw: String
@@ -130,8 +133,11 @@ actor APIClient {
         log.debug("[read.php] POST tid=\(tid) page=\(page) -> \(url.absoluteString)")
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let msg = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) ?? ""
-            throw AppError.serverError(code: http.statusCode, message: String(msg.prefix(200)))
+            let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
+            if http.statusCode == 403, rawMsg.contains("未登录") || rawMsg.contains("登录") {
+                throw AppError.loginRequired
+            }
+            throw AppError.serverError(code: http.statusCode, message: String(rawMsg.prefix(200)))
         }
 
         let raw: String
@@ -205,6 +211,12 @@ actor APIClient {
             log.error("[read.php] JSONSerialization failed: \(error), body len=\(jsonData.count), prefix: \(String(data: jsonData.prefix(200), encoding: .utf8) ?? "?")")
             throw AppError.decodingFailed
         }
+
+        if isLoginRequiredResponse(root) {
+            log.info("[read.php] login required for tid")
+            throw AppError.loginRequired
+        }
+
         let dataObj = root["data"] as? [String: Any]
         var rObj = dataObj?["__R"] as? [String: Any]
         if rObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
@@ -229,6 +241,20 @@ actor APIClient {
     private func decodeGB18030(_ data: Data) -> String? {
         let enc = CFStringConvertEncodingToNSStringEncoding(CFStringEncoding(CFStringEncodings.GB_18030_2000.rawValue))
         return String(data: data, encoding: String.Encoding(rawValue: enc))
+    }
+
+    /// NGA returns error/__MESSAGE with "未登录" or 403 when login required for restricted forums.
+    private func isLoginRequiredResponse(_ root: [String: Any]) -> Bool {
+        if root["error"] != nil { return true }
+        let dataObj = root["data"] as? [String: Any]
+        let msg = dataObj?["__MESSAGE"] as? [String: Any]
+        if let code = msg?["3"] as? Int, code == 403 { return true }
+        if let code = msg?["3"] as? String, code == "403" { return true }
+        for (_, v) in msg ?? [:] {
+            let s = "\(v)"
+            if s.contains("未登录") || s.contains("请登录") || s.contains("需要登录") { return true }
+        }
+        return false
     }
 
     /// Replaces raw control chars in JSON string values. NGA read.php returns unescaped tab/newline in content.
@@ -290,6 +316,11 @@ actor APIClient {
             log.error("[thread.php] parse failed, body prefix: \(raw.prefix(300))")
             throw AppError.decodingFailed
         }
+        if isLoginRequiredResponse(root) {
+            log.info("[thread.php] login required for fid")
+            throw AppError.loginRequired
+        }
+
         let dataObj = root["data"] as? [String: Any]
         var tObj = dataObj?["__T"] as? [String: Any]
         if tObj == nil, let items = dataObj?["item"] as? [[String: Any]] {

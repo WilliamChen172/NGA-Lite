@@ -11,6 +11,8 @@ struct ThreadListView: View {
     let forum: Forum
     @StateObject private var viewModel: ThreadListViewModel
     @State private var selectedTab = 0
+    @State private var showLoginSheet = false
+    @EnvironmentObject var authService: AuthService
     
     init(forum: Forum, forumService: any ForumServiceProtocol = ForumService.shared) {
         self.forum = forum
@@ -50,7 +52,9 @@ struct ThreadListView: View {
                     isLoading: viewModel.isLoading,
                     isEmpty: viewModel.threads.isEmpty,
                     errorMessage: viewModel.errorMessage,
-                    retryAction: { Task { await viewModel.loadThreads(forumId: forum.fid) } }
+                    retryAction: { Task { await viewModel.loadThreads(forumId: forum.fid) } },
+                    isLoginRequired: viewModel.isLoginRequired,
+                    loginAction: { showLoginSheet = true }
                 ) {
                     List {
                         ForEach(viewModel.threads) { thread in
@@ -117,6 +121,11 @@ struct ThreadListView: View {
         .navigationDestination(for: ForumThread.self) { thread in
             ThreadDetailView(thread: thread)
         }
+        .sheet(isPresented: $showLoginSheet) {
+            NavigationStack {
+                LoginView(authService: authService)
+            }
+        }
         .ngaPageBackground()
     }
 }
@@ -134,5 +143,6 @@ struct ThreadListView: View {
             ),
             forumService: MockForumService()
         )
+        .environmentObject(AuthService.shared)
     }
 }

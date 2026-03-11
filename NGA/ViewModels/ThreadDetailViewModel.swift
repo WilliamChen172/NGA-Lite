@@ -17,6 +17,7 @@ final class ThreadDetailViewModel: ObservableObject {
     @Published private(set) var isLoadingMore = false
     @Published private(set) var isPosting = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isLoginRequired = false
 
     private let forumService: any ForumServiceProtocol
     private var threadId: Int = 0
@@ -30,9 +31,13 @@ final class ThreadDetailViewModel: ObservableObject {
         currentPage = 1
         isLoading = true
         errorMessage = nil
+        isLoginRequired = false
 
         do {
             posts = try await forumService.getThread(threadId: threadId, page: 1)
+        } catch AppError.loginRequired {
+            isLoginRequired = true
+            errorMessage = AppError.loginRequired.errorDescription
         } catch let error as AppError {
             errorMessage = error.errorDescription
         } catch {
@@ -52,6 +57,9 @@ final class ThreadDetailViewModel: ObservableObject {
                 posts.append(contentsOf: newPosts)
                 currentPage += 1
             }
+        } catch AppError.loginRequired {
+            isLoginRequired = true
+            errorMessage = AppError.loginRequired.errorDescription
         } catch {
             errorMessage = error.localizedDescription
         }

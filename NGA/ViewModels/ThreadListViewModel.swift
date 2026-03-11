@@ -29,6 +29,7 @@ final class ThreadListViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published private(set) var isLoadingMore = false
     @Published private(set) var errorMessage: String?
+    @Published private(set) var isLoginRequired = false
     @Published var sortOrder: ThreadSortOrder = .lastPost
 
     private let forumService: any ForumServiceProtocol
@@ -43,9 +44,13 @@ final class ThreadListViewModel: ObservableObject {
         currentPage = 1
         isLoading = true
         errorMessage = nil
+        isLoginRequired = false
 
         do {
             threads = try await forumService.getThreads(forumId: forumId, page: 1, orderBy: sortOrder.rawValue)
+        } catch AppError.loginRequired {
+            isLoginRequired = true
+            errorMessage = AppError.loginRequired.errorDescription
         } catch let error as AppError {
             errorMessage = error.errorDescription
         } catch {
@@ -65,6 +70,9 @@ final class ThreadListViewModel: ObservableObject {
                 threads.append(contentsOf: newThreads)
                 currentPage += 1
             }
+        } catch AppError.loginRequired {
+            isLoginRequired = true
+            errorMessage = AppError.loginRequired.errorDescription
         } catch {
             errorMessage = error.localizedDescription
         }
