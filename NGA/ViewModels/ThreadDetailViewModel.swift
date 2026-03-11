@@ -7,10 +7,12 @@
 
 import Foundation
 import Combine
+import Logging
 
 @MainActor
 final class ThreadDetailViewModel: ObservableObject {
     @Published private(set) var posts: [Post] = []
+    @Published private(set) var authorMap: [Int: UserInForum] = [:]
     @Published private(set) var currentPage = 1
     @Published private(set) var totalPages = 1
     @Published private(set) var isLoading = false
@@ -21,6 +23,7 @@ final class ThreadDetailViewModel: ObservableObject {
 
     private let forumService: any ForumServiceProtocol
     private var threadId: Int = 0
+    private let log = Logger.for(.forum)
 
     init(forumService: any ForumServiceProtocol = ForumService.shared) {
         self.forumService = forumService
@@ -34,7 +37,9 @@ final class ThreadDetailViewModel: ObservableObject {
         isLoginRequired = false
 
         do {
-            posts = try await forumService.getThread(threadId: threadId, page: 1)
+            let result = try await forumService.getThread(threadId: threadId, page: 1)
+            posts = result.posts
+            authorMap = result.authorMap
         } catch AppError.loginRequired {
             isLoginRequired = true
             errorMessage = AppError.loginRequired.errorDescription
@@ -52,9 +57,10 @@ final class ThreadDetailViewModel: ObservableObject {
         isLoadingMore = true
 
         do {
-            let newPosts = try await forumService.getThread(threadId: threadId, page: currentPage + 1)
-            if !newPosts.isEmpty {
-                posts.append(contentsOf: newPosts)
+            let result = try await forumService.getThread(threadId: threadId, page: currentPage + 1)
+            if !result.posts.isEmpty {
+                posts.append(contentsOf: result.posts)
+                for (uid, info) in result.authorMap { authorMap[uid] = info }
                 currentPage += 1
             }
         } catch AppError.loginRequired {
@@ -98,5 +104,11 @@ final class ThreadDetailViewModel: ObservableObject {
             errorMessage = error.localizedDescription
             throw error
         }
+    }
+
+    /// Returns author info for a post. Uses authorMap if available; otherwise nil.
+    func authorInfo(for post: Post) -> UserInForum? {
+        guard let uid = post.authorId else { return nil }
+        return authorMap[uid]
     }
 }

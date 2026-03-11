@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct NotificationsView: View {
+    @EnvironmentObject var authService: AuthService
+    @Environment(\.currentTabIndex) private var currentTabIndex
     @State private var selectedTab = 0
     
     var body: some View {
@@ -15,32 +17,63 @@ struct NotificationsView: View {
             AppTheme.Colors.homeBackground
                 .ignoresSafeArea()
             
-            VStack(spacing: 0) {
-                // Tab selector
-                Picker("通知类型", selection: $selectedTab) {
-                    Text("系统").tag(0)
-                    Text("回复").tag(1)
-                    Text("@我").tag(2)
-                }
-                .pickerStyle(.segmented)
-                .padding(AppTheme.Layout.standardPadding)
-                
-                // Content based on selected tab
-                TabView(selection: $selectedTab) {
-                    notificationList(type: "系统")
-                        .tag(0)
+            if authService.isAuthenticated {
+                VStack(spacing: 0) {
+                    Picker("通知类型", selection: $selectedTab) {
+                        Text("系统").tag(0)
+                        Text("回复").tag(1)
+                        Text("@我").tag(2)
+                    }
+                    .pickerStyle(.segmented)
+                    .padding(AppTheme.Layout.standardPadding)
                     
-                    notificationList(type: "回复")
-                        .tag(1)
-                    
-                    notificationList(type: "@我")
-                        .tag(2)
+                    TabView(selection: $selectedTab) {
+                        notificationList(type: "系统").tag(0)
+                        notificationList(type: "回复").tag(1)
+                        notificationList(type: "@我").tag(2)
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+            } else {
+                loginRequiredSection
             }
         }
         .navigationTitle("消息")
         .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private var loginRequiredSection: some View {
+        List {
+            Section {
+                VStack(spacing: AppTheme.Layout.mediumSpacing) {
+                    Image(systemName: "bell.circle")
+                        .font(.system(size: 60))
+                        .foregroundColor(AppTheme.Colors.accent)
+                        .padding(.top, AppTheme.Layout.standardPadding)
+                    
+                    Text("登录后查看消息")
+                        .font(.system(size: AppTheme.FontSize.body))
+                        .foregroundColor(.secondary)
+                    
+                    Button {
+                        authService.requestLogin(fromTab: currentTabIndex)
+                    } label: {
+                        Text("去登录")
+                            .font(.system(size: AppTheme.FontSize.body, weight: .semibold))
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(AppTheme.Colors.accent)
+                            .cornerRadius(8)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.bottom, AppTheme.Layout.standardPadding)
+                }
+                .frame(maxWidth: .infinity)
+                .listRowInsets(EdgeInsets(top: 20, leading: 20, bottom: 20, trailing: 20))
+            }
+        }
+        .scrollContentBackground(.hidden)
     }
     
     private func notificationList(type: String) -> some View {
@@ -104,5 +137,6 @@ struct NotificationRow: View {
 #Preview {
     NavigationStack {
         NotificationsView()
+            .environmentObject(AuthService.shared)
     }
 }

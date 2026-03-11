@@ -35,6 +35,7 @@ enum Endpoint {
     // Login (nuke.php)
     case login
     case logout
+    case iflogin
 
     var lib: String {
         switch self {
@@ -43,7 +44,7 @@ enum Endpoint {
         case .postList, .postNew, .postReply: return "post"
         case .userDetail, .userDetailName: return "user"
         case .favorForumSync: return "favorforum"
-        case .login, .logout: return "login"
+        case .login, .logout, .iflogin: return "login"
         }
     }
 
@@ -63,14 +64,15 @@ enum Endpoint {
         case .userDetail: return "detail"
         case .userDetailName: return "detailname"
         case .favorForumSync: return "sync"
-        case .login: return "account"
+        case .login: return "login"      // wolfcon 10.3 客户端登录: __act=login
         case .logout: return "account"
+        case .iflogin: return "iflogin"
         }
     }
 
     var baseURL: String {
         switch self {
-        case .login, .logout: return Constants.API.nukeURL
+        case .login, .logout, .iflogin: return Constants.API.nukeURL
         default: return Constants.API.appAPIURL
         }
     }
@@ -90,10 +92,11 @@ enum Endpoint {
         }
     }
 
-    /// Use __output=14 (standard JSON) for app_api.php per NGA doc.
+    /// Use __output=14 (standard JSON) for app_api.php and nuke login per NGA doc.
     var useOutput14: Bool {
         switch self {
-        case .login, .logout: return false
+        case .logout, .iflogin: return false
+        case .login: return true  // login must request __output=14 to get JSON, not HTML
         default: return true
         }
     }

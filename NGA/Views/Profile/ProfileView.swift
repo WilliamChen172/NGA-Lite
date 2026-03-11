@@ -9,7 +9,7 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject var authService: AuthService
-    @State private var showLoginSheet = false
+    @State private var showWebViewLogin = false
     
     var body: some View {
         ZStack {
@@ -23,17 +23,16 @@ struct ProfileView: View {
                     userActionsSection
                     logoutSection
                 } else {
-                    // User is not logged in - show login prompt
+                    // User is not logged in - show WebView login prompt
                     loginPromptSection
                 }
             }
             .scrollContentBackground(.hidden)
         }
         .navigationTitle("我的")
-        .sheet(isPresented: $showLoginSheet) {
-            NavigationStack {
-                LoginView(authService: authService)
-            }
+        .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showWebViewLogin) {
+            WebViewLoginView(authService: authService) {}
         }
     }
     
@@ -49,10 +48,14 @@ struct ProfileView: View {
                     .font(.system(size: AppTheme.FontSize.body))
                     .foregroundColor(.secondary)
                 
+                Text("使用网页登录，支持图形验证码")
+                    .font(.system(size: AppTheme.FontSize.caption))
+                    .foregroundColor(.secondary)
+                
                 Button {
-                    showLoginSheet = true
+                    showWebViewLogin = true
                 } label: {
-                    Text("登录")
+                    Text("使用网页登录")
                         .font(.system(size: AppTheme.FontSize.body, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)

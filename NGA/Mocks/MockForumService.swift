@@ -36,9 +36,9 @@ actor MockForumService: ForumServiceProtocol {
         1
     }
 
-    func getThread(threadId: Int, page: Int) async throws -> [Post] {
+    func getThread(threadId: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
         try await Task.sleep(nanoseconds: 300_000_000)
-        return MockData.posts
+        return (posts: MockData.posts, authorMap: MockData.authorMap)
     }
 
     func createThread(forumId: Int, title: String, content: String) async throws -> ForumThread {

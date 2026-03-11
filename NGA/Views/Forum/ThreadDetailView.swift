@@ -11,8 +11,8 @@ struct ThreadDetailView: View {
     let thread: ForumThread
     @StateObject private var viewModel: ThreadDetailViewModel
     @State private var showReplySheet = false
-    @State private var showLoginSheet = false
     @EnvironmentObject var authService: AuthService
+    @Environment(\.currentTabIndex) private var currentTabIndex
     
     init(thread: ForumThread, forumService: any ForumServiceProtocol = ForumService.shared) {
         self.thread = thread
@@ -26,7 +26,7 @@ struct ThreadDetailView: View {
             errorMessage: viewModel.errorMessage,
             retryAction: { Task { await viewModel.loadThread(threadId: thread.tid) } },
             isLoginRequired: viewModel.isLoginRequired,
-            loginAction: { showLoginSheet = true }
+            loginAction: { authService.requestLogin(fromTab: currentTabIndex) }
         ) {
             ScrollView {
                 VStack(spacing: 0) {
@@ -49,8 +49,21 @@ struct ThreadDetailView: View {
                         ForEach(viewModel.posts) { post in
                             PostDetailView(
                                 post: post,
-                                onVoteUp: { Task { await viewModel.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: true) } },
-                                onVoteDown: { Task { await viewModel.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: false) } }
+                                authorInfo: viewModel.authorInfo(for: post),
+                                onVoteUp: {
+                                    if authService.requireAuthFor(.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: true)) {
+                                        Task { await viewModel.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: true) }
+                                    } else {
+                                        authService.requestLogin(fromTab: currentTabIndex)
+                                    }
+                                },
+                                onVoteDown: {
+                                    if authService.requireAuthFor(.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: false)) {
+                                        Task { await viewModel.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: false) }
+                                    } else {
+                                        authService.requestLogin(fromTab: currentTabIndex)
+                                    }
+                                }
                             )
                             
                             Divider()
@@ -84,10 +97,10 @@ struct ThreadDetailView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
-                    if authService.isAuthenticated {
+                    if authService.requireAuthFor(.replyToThread(threadId: thread.tid)) {
                         showReplySheet = true
                     } else {
-                        showLoginSheet = true
+                        authService.requestLogin(fromTab: currentTabIndex)
                     }
                 } label: {
                     Image(systemName: "square.and.pencil")
@@ -106,9 +119,30 @@ struct ThreadDetailView: View {
                 showReplySheet = false
             }
         }
-        .sheet(isPresented: $showLoginSheet) {
-            NavigationStack {
-                LoginView(authService: authService)
+        .onChange(of: authService.postLoginIntent) { _, intent in
+            guard let intent else { return }
+            switch intent {
+            case .replyToThread(let threadId) where threadId == thread.tid:
+                showReplySheet = true
+                authService.clearPostLoginIntent()
+            case .votePost(let postId, let tid, let pid, let upvote) where tid == thread.tid:
+                Task { await viewModel.votePost(postId: postId, tid: tid, pid: pid, upvote: upvote) }
+                authService.clearPostLoginIntent()
+            default:
+                break
+            }
+        }
+        .onAppear {
+            guard let intent = authService.postLoginIntent else { return }
+            switch intent {
+            case .replyToThread(let threadId) where threadId == thread.tid:
+                showReplySheet = true
+                authService.clearPostLoginIntent()
+            case .votePost(let postId, let tid, let pid, let upvote) where tid == thread.tid:
+                Task { await viewModel.votePost(postId: postId, tid: tid, pid: pid, upvote: upvote) }
+                authService.clearPostLoginIntent()
+            default:
+                break
             }
         }
         .ngaPageBackground()
@@ -130,5 +164,7 @@ struct ThreadDetailView: View {
             ),
             forumService: MockForumService()
         )
+        .environmentObject(AuthService.shared)
+        .environment(\.currentTabIndex, Constants.TabIndex.forum)
     }
 }

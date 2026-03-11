@@ -13,6 +13,7 @@ actor APIClient {
     private let log = Logger.for(.api)
 
     private var authToken: String?
+    private var accessUid: Int?
     private let session: URLSession
     private let decoder: JSONDecoder
 
@@ -25,6 +26,10 @@ actor APIClient {
     func setAuthToken(_ token: String?) {
         log.debug("setAuthToken called, hasToken=\(token != nil)")
         authToken = token
+    }
+
+    func setAccessUid(_ uid: Int?) {
+        accessUid = uid
     }
 
     /// Fetches thread list from thread.php. MNGA-style: POST, __inchst=UTF8.
@@ -49,21 +54,28 @@ actor APIClient {
     }
 
     private func fetchThreadListFrom(baseURL: String, threadURL: String, fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [ForumThread] {
-        var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "fid", value: "\(fid)"),
-            URLQueryItem(name: "page", value: "\(page)"),
-            URLQueryItem(name: "__inchst", value: "UTF8"),
-            URLQueryItem(name: "lite", value: "js"),
-            URLQueryItem(name: "order_by", value: orderBy),
-            URLQueryItem(name: "recommend", value: recommendOnly ? "1" : "0")
+        guard let url = URL(string: threadURL) else { throw AppError.decodingFailed }
+        var bodyParams: [String: String] = [
+            "fid": "\(fid)",
+            "page": "\(page)",
+            "__inchst": "UTF8",
+            "lite": "js",
+            "order_by": orderBy,
+            "recommend": recommendOnly ? "1" : "0"
         ]
-        var components = URLComponents(string: threadURL)!
-        components.queryItems = queryItems
-        guard let url = components.url else { throw AppError.decodingFailed }
+        if let token = authToken {
+            bodyParams["access_token"] = token
+        }
+        if let uid = accessUid {
+            bodyParams["access_uid"] = "\(uid)"
+        }
+        let bodyStr = bodyParams
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data()
+        request.httpBody = bodyStr.data(using: .utf8)
         request.setValue("NGA_skull/7.3.1(iPhone; iOS)", forHTTPHeaderField: "User-Agent")
         request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
         if let token = authToken {
@@ -74,6 +86,11 @@ actor APIClient {
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
+            if http.statusCode == 401 {
+                log.warning("[thread.php] 401 Unauthorized")
+                NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
+                throw AppError.unauthorized
+            }
             if http.statusCode == 403, rawMsg.contains("未登录") || rawMsg.contains("登录") {
                 throw AppError.loginRequired
             }
@@ -91,17 +108,17 @@ actor APIClient {
         return try parseThreadListResponse(raw: raw, data: data)
     }
 
-    /// Fetches post list from read.php. MNGA-style: POST, __inchst=UTF8, lite=js.
-    /// Response: window.script_muti_get_var_store={"data":{"__R":{"0":{...},"1":{...}}}}
-    func fetchPostList(tid: Int, page: Int) async throws -> [Post] {
+    /// Fetches post list and author map from read.php. MNGA-style: POST, __inchst=UTF8, lite=js.
+    /// Response: window.script_muti_get_var_store={"data":{"__R":{...},"__U":{...},"__GROUPS":{...}}}
+    func fetchPostList(tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
         let bases = [Constants.API.baseURL] + Constants.API.alternateBaseURLs
         var lastError: Error?
         for base in bases {
             let readURL = "\(base)/read.php"
             do {
-                let posts = try await fetchPostListFrom(baseURL: base, readURL: readURL, tid: tid, page: page)
-                log.debug("[read.php] tid=\(tid) page=\(page) -> \(posts.count) posts (base: \(base))")
-                return posts
+                let result = try await fetchPostListFrom(baseURL: base, readURL: readURL, tid: tid, page: page)
+                log.debug("[read.php] tid=\(tid) page=\(page) -> \(result.posts.count) posts, \(result.authorMap.count) authors (base: \(base))")
+                return result
             } catch {
                 lastError = error
                 log.warning("[read.php] failed for \(base): \(error.localizedDescription)")
@@ -110,21 +127,30 @@ actor APIClient {
         throw lastError ?? AppError.decodingFailed
     }
 
-    private func fetchPostListFrom(baseURL: String, readURL: String, tid: Int, page: Int) async throws -> [Post] {
-        var components = URLComponents(string: readURL)!
-        components.queryItems = [
-            URLQueryItem(name: "tid", value: "\(tid)"),
-            URLQueryItem(name: "page", value: "\(page)"),
-            URLQueryItem(name: "__inchst", value: "UTF8"),
-            URLQueryItem(name: "lite", value: "js"),
-            URLQueryItem(name: "v2", value: "1")
+    private func fetchPostListFrom(baseURL: String, readURL: String, tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        guard let url = URL(string: readURL) else { throw AppError.decodingFailed }
+        var bodyParams: [String: String] = [
+            "tid": "\(tid)",
+            "page": "\(page)",
+            "__inchst": "UTF8",
+            "__output": "1",
+            "lite": "js",
+            "v2": "1"
         ]
-        guard let url = components.url else { throw AppError.decodingFailed }
+        if let token = authToken {
+            bodyParams["access_token"] = token
+        }
+        if let uid = accessUid {
+            bodyParams["access_uid"] = "\(uid)"
+        }
+        let bodyStr = bodyParams
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = Data()
-        request.setValue("NGA_skull/7.3.1(iPhone; iOS)", forHTTPHeaderField: "User-Agent")
+        request.httpBody = bodyStr.data(using: .utf8)
+        request.setValue("NGA_WP_JW", forHTTPHeaderField: "User-Agent")
         request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
         if let token = authToken {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -134,6 +160,11 @@ actor APIClient {
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
             let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
+            if http.statusCode == 401 {
+                log.warning("[read.php] 401 Unauthorized")
+                NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
+                throw AppError.unauthorized
+            }
             if http.statusCode == 403, rawMsg.contains("未登录") || rawMsg.contains("登录") {
                 throw AppError.loginRequired
             }
@@ -151,7 +182,7 @@ actor APIClient {
         return try parsePostListResponse(raw: raw)
     }
 
-    /// Vote on a post. value: 1 = 点赞 (upvote), 2 = 点踩 (downvote). MNGA uses nuke topic_recommend add.
+    /// Vote on a post. value: 1 = 点赞, 2 = 点踩. value: 1 = 点赞 (upvote), 2 = 点踩 (downvote). MNGA uses nuke topic_recommend add.
     func votePost(tid: Int, pid: Int, value: Int) async throws -> Int {
         let body: [String: String] = [
             "__lib": "topic_recommend",
@@ -175,6 +206,11 @@ actor APIClient {
         log.debug("[vote] tid=\(tid) pid=\(pid) value=\(value)")
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            if http.statusCode == 401 {
+                log.warning("[vote] 401 Unauthorized")
+                NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
+                throw AppError.unauthorized
+            }
             let msg = String(data: data, encoding: .utf8) ?? ""
             throw AppError.serverError(code: http.statusCode, message: String(msg.prefix(200)))
         }
@@ -188,7 +224,7 @@ actor APIClient {
         return delta
     }
 
-    private func parsePostListResponse(raw: String) throws -> [Post] {
+    private func parsePostListResponse(raw: String) throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
         let trimmedRaw = raw.hasPrefix("\u{FEFF}") ? String(raw.dropFirst(1)) : raw
         guard let jsonStr = extractJSONFromScriptVar(trimmedRaw, prefix: "window.script_muti_get_var_store=") else {
             log.error("[read.php] extractJSON failed, body prefix: \(raw.prefix(300))")
@@ -223,10 +259,13 @@ actor APIClient {
             rObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
         }
         guard let r = rObj, !r.isEmpty else {
-            if dataObj != nil && (dataObj?["__R"] == nil) { return [] }
+            if dataObj != nil && (dataObj?["__R"] == nil) {
+                return (posts: [], authorMap: [:])
+            }
             log.error("[read.php] no __R, body prefix: \(raw.prefix(300))")
             throw AppError.decodingFailed
         }
+
         var posts: [Post] = []
         for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
             guard let postDict = r[key] as? [String: Any],
@@ -235,7 +274,37 @@ actor APIClient {
                 posts.append(post)
             }
         }
-        return posts
+        let fid = posts.first?.fid ?? 0
+        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
+        return (posts: posts, authorMap: authorMap)
+    }
+
+    /// Parses __U and __GROUPS from read.php into [uid: UserInForum].
+    /// __GROUPS may be inside __U or a sibling of __U under data.
+    private func parseAuthorMap(dataObj: [String: Any]?, fid: Int) -> [Int: UserInForum] {
+        guard let uObj = dataObj?["__U"] as? [String: Any] else { return [:] }
+        let groupsObj = (uObj["__GROUPS"] ?? dataObj?["__GROUPS"]) as? [String: Any]
+        var map: [Int: UserInForum] = [:]
+        for (key, val) in uObj {
+            guard !key.hasPrefix("__"), let userDict = val as? [String: Any] else { continue }
+            guard let uid = Int(key) else { continue }
+
+            let username = userDict["username"] as? String
+            let avatar = userDict["avatar"] as? String
+            let postnum = (userDict["postnum"] as? Int) ?? (userDict["postnum"] as? String).flatMap { Int($0) }
+            let reputation = userDict["reputation"] as? String
+            let memberid = (userDict["memberid"] as? Int) ?? (userDict["memberid"] as? String).flatMap { Int($0) }
+
+            var levelName: String?
+            if let mid = memberid, let g = groupsObj?["\(mid)"] as? [Any], let first = g.first {
+                levelName = "\(first)"
+            }
+
+            let user = User(uid: uid, username: username, nickname: nil, avatar: avatar)
+            let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, reputation: reputation)
+            map[uid] = UserInForum(user: user, forumContext: forumContext)
+        }
+        return map
     }
 
     private func decodeGB18030(_ data: Data) -> String? {
@@ -348,9 +417,22 @@ actor APIClient {
         body: [String: String]? = nil
     ) async throws -> [String: Any] {
         let (data, _) = try await perform(endpoint: endpoint, params: params, body: body)
-        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        var parseData = data
+        if var raw = String(data: data, encoding: .utf8) {
+            if raw.contains("window.script_muti_get_var_store=") {
+                raw = raw.replacingOccurrences(of: "window.script_muti_get_var_store=", with: "")
+                parseData = raw.data(using: .utf8) ?? data
+            }
+            if endpoint.lib == "login" {
+                log.debug("[login] raw response (\(data.count) bytes): \(raw.prefix(2000))\(raw.count > 2000 ? "..." : "")")
+            }
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: parseData) as? [String: Any] else {
             logResponseOnDecodeFailure(endpoint: endpoint, data: data, error: nil)
             throw AppError.decodingFailed
+        }
+        if endpoint.lib == "login", let error = json["error"] as? [AnyHashable: Any] {
+            log.debug("[login] parsed json has error: \(json)")
         }
         return json
     }
@@ -378,7 +460,16 @@ actor APIClient {
         request.allHTTPHeaderFields?.forEach { k, v in
             curl += " \\\n  -H '\(k): \(v)'"
         }
-        if let body = request.httpBody, let bodyStr = String(data: body, encoding: .utf8), !bodyStr.isEmpty {
+        if let body = request.httpBody, var bodyStr = String(data: body, encoding: .utf8), !bodyStr.isEmpty {
+            if endpoint.lib == "login" {
+                bodyStr = bodyStr
+                    .components(separatedBy: "&")
+                    .map { part in
+                        if part.hasPrefix("password=") { return "password=***REDACTED***" }
+                        return part
+                    }
+                    .joined(separator: "&")
+            }
             curl += " \\\n  -d '\(bodyStr)'"
         }
         log.debug("[Postman] \(endpoint.lib)/\(endpoint.act) full request:\n\(curl)")
@@ -418,11 +509,17 @@ actor APIClient {
                 log.debug("\(endpoint.lib)/\(endpoint.act) <- \(httpResponse.statusCode)")
                 if httpResponse.statusCode == 401 {
                     log.warning("\(endpoint.lib)/\(endpoint.act) 401 Unauthorized")
+                    NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
                     throw AppError.unauthorized
                 }
                 if httpResponse.statusCode >= 400 {
                     let message = String(data: data, encoding: .utf8) ?? "Unknown error"
-                    log.error("\(endpoint.lib)/\(endpoint.act) \(httpResponse.statusCode): \(message.prefix(200))")
+                    log.error("\(endpoint.lib)/\(endpoint.act) \(httpResponse.statusCode) full response: \(message)")
+                    if endpoint.lib == "login" {
+                        if let gbk = decodeGB18030(data) {
+                            log.error("[login] response (GBK decoded): \(gbk)")
+                        }
+                    }
                     throw AppError.serverError(code: httpResponse.statusCode, message: message)
                 }
             }
@@ -473,7 +570,10 @@ actor APIClient {
         if let token = authToken {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        request.setValue("NGA/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
+        if let token = authToken, let uid = accessUid {
+            request.setValue("ngaPassportUid=\(uid); ngaPassportCid=\(token)", forHTTPHeaderField: "Cookie")
+        }
+        request.setValue(Constants.API.userAgent, forHTTPHeaderField: "User-Agent")
         logFullRequestForPostman(request: request, endpoint: endpoint)
         return request
     }

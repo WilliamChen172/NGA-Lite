@@ -111,12 +111,12 @@ actor ForumService: ForumServiceProtocol {
         try await apiClient.votePost(tid: tid, pid: pid, value: value)
     }
 
-    func getThread(threadId: Int, page: Int = 1) async throws -> [Post] {
+    func getThread(threadId: Int, page: Int = 1) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
         log.debug("getThread threadId=\(threadId) page=\(page)")
         do {
-            let list = try await apiClient.fetchPostList(tid: threadId, page: page)
-            log.info("getThread threadId=\(threadId) page=\(page) -> \(list.count) posts")
-            return list
+            let result = try await apiClient.fetchPostList(tid: threadId, page: page)
+            log.info("getThread threadId=\(threadId) page=\(page) -> \(result.posts.count) posts, \(result.authorMap.count) authors")
+            return result
         } catch {
             log.error("getThread threadId=\(threadId) failed: \(error.localizedDescription)")
             throw error

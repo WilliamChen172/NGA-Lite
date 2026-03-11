@@ -35,5 +35,21 @@ enum MockData {
         Post(pid: 3, tid: 5627431, fid: -447601, content: "<p>我觉得今年会是游戏大年</p>", authorId: 7, author: "资深玩家", floor: 3, postDate: nil),
     ]
 
+    /// Mock author info for preview. Keys: authorIds from posts.
+    static let authorMap: [Int: UserInForum] = [
+        7989705: UserInForum(
+            user: User(uid: 7989705, username: "lintx", nickname: nil, avatar: nil),
+            forumContext: ForumUserContext(fid: -447601, levelName: "学徒", postnum: 352, reputation: "61_120")
+        ),
+        6: UserInForum(
+            user: User(uid: 6, username: "路人甲", nickname: nil, avatar: nil),
+            forumContext: ForumUserContext(fid: -447601, levelName: "新兵", postnum: 89, reputation: nil)
+        ),
+        7: UserInForum(
+            user: User(uid: 7, username: "资深玩家", nickname: nil, avatar: nil),
+            forumContext: ForumUserContext(fid: -447601, levelName: "大元帅", postnum: 1250, reputation: "61_500")
+        ),
+    ]
+
     static let user = User(uid: 1, username: "testuser", nickname: "测试用户", avatar: nil)
 }

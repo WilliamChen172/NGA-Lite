@@ -167,8 +167,12 @@ if authService.isAuthenticated {
 | **First launch** | No token → guest mode; auth state = false |
 | **Successful login** | Save token to Keychain; set auth state = true; dismiss login sheet |
 | **App restart** | Restore token from Keychain; set auth state = true if token exists |
-| **Logout** | Clear token from Keychain; set auth state = false; navigate to profile shows login prompt |
+| **Logout** | Clear token from Keychain; clear WKWebView NGA cookies; set auth state = false |
 | **Token expiry** | API returns 401 → clear token; show login prompt on next authenticated action |
+
+**WebView 登录：** 因 NGA 需图形验证码，登录入口使用 WebView 加载官方页面。流程、edge case 及后续适配见 [WEBVIEW_LOGIN.md](WEBVIEW_LOGIN.md)。
+
+**登录后功能（Profile、消息、pendingAction）：** 状态、占位项、edge case 及后续计划见 [AUTH_AND_PROFILE_PLAN.md](AUTH_AND_PROFILE_PLAN.md)。
 
 ### 3.4 User Experience Principles
 
