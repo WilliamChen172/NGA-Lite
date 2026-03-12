@@ -40,8 +40,6 @@ private let allEndpoints: [EndpointSpec] = [
     EndpointSpec(lib: "subject", act: "search", version: nil, method: "GET", useNuke: false, extraParams: [:]),
     EndpointSpec(lib: "subject", act: "subscription", version: nil, method: "GET", useNuke: false, extraParams: [:]),
     EndpointSpec(lib: "subject", act: "hot", version: nil, method: "GET", useNuke: false, extraParams: [:]),
-    // FavorForum
-    EndpointSpec(lib: "favorforum", act: "sync", version: nil, method: "GET", useNuke: false, extraParams: [:]),
     // User
     EndpointSpec(lib: "user", act: "subjects", version: nil, method: "GET", useNuke: false, extraParams: [:]),
     EndpointSpec(lib: "user", act: "replys", version: nil, method: "GET", useNuke: false, extraParams: [:]),

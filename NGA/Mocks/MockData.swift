@@ -10,14 +10,14 @@ import Foundation
 /// Mock data for previews and testing. Aligns with thread.php / read.php API structures.
 enum MockData {
     static let forums: [Forum] = [
-        Forum(fid: -447601, name: "艾泽拉斯议事厅", name2: "议事厅", description: "魔兽主讨论区", parent: 1, subForums: nil),
-        Forum(fid: 7, name: "游戏综合", name2: nil, description: "游戏讨论区", parent: nil, subForums: nil),
-        Forum(fid: 2, name: "动漫综合", name2: nil, description: "动漫讨论", parent: nil, subForums: nil),
-        Forum(fid: 3, name: "影视综合", name2: nil, description: "影视娱乐", parent: nil, subForums: nil),
-        Forum(fid: 4, name: "数码科技", name2: nil, description: "科技产品", parent: nil, subForums: nil),
-        Forum(fid: 5, name: "体育运动", name2: nil, description: "体育赛事", parent: nil, subForums: nil),
-        Forum(fid: 6, name: "美食天地", name2: nil, description: "美食分享", parent: nil, subForums: nil),
-        Forum(fid: 8, name: "生活杂谈", name2: nil, description: "日常生活", parent: nil, subForums: nil),
+        Forum(fid: -447601, name: "艾泽拉斯议事厅", name2: "议事厅", description: "魔兽主讨论区", parent: 1, subForums: nil, icon: nil),
+        Forum(fid: 7, name: "游戏综合", name2: nil, description: "游戏讨论区", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 2, name: "动漫综合", name2: nil, description: "动漫讨论", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 3, name: "影视综合", name2: nil, description: "影视娱乐", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 4, name: "数码科技", name2: nil, description: "科技产品", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 5, name: "体育运动", name2: nil, description: "体育赛事", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 6, name: "美食天地", name2: nil, description: "美食分享", parent: nil, subForums: nil, icon: nil),
+        Forum(fid: 8, name: "生活杂谈", name2: nil, description: "日常生活", parent: nil, subForums: nil, icon: nil),
     ]
 
     /// Thread list mock (thread.php __T format). fid matches forums.

@@ -12,6 +12,7 @@ import Combine
 final class ForumListViewModel: ObservableObject {
     @Published private(set) var forums: [Forum] = []
     @Published private(set) var categories: [ForumCategoryDisplay] = []
+    @Published private(set) var favorForums: [Forum] = []
     @Published private(set) var isLoading = false
     @Published private(set) var errorMessage: String?
 
@@ -26,7 +27,11 @@ final class ForumListViewModel: ObservableObject {
         errorMessage = nil
 
         do {
-            categories = try await forumService.getForumCategories()
+            async let catsTask = forumService.getForumCategories()
+            async let favorTask = forumService.getFavorForums()
+            let (cats, favor) = try await (catsTask, favorTask)
+            categories = cats
+            favorForums = favor
             forums = categories.flatMap { cat in
                 cat.groups.flatMap { $0.forums }
             }

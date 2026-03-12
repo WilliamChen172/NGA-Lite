@@ -14,6 +14,7 @@
 		9EB8EA4F2F6066EA00D307C8 /* Kingfisher in Frameworks */ = {isa = PBXBuildFile; productRef = 9EB8EA0E2F60600000D307C8 /* Kingfisher */; };
 		9EB8EA502F6066EA00D307C8 /* SwiftSoup in Frameworks */ = {isa = PBXBuildFile; productRef = 9EB8EA0F2F60600000D307C8 /* SwiftSoup */; };
 		9EB8EA512F6066EA00D307C8 /* KeychainAccess in Frameworks */ = {isa = PBXBuildFile; productRef = 9EB8EA102F60600000D307C8 /* KeychainAccess */; };
+		9EBF7DB02F6331EA0091F343 /* CryptoSwift in Frameworks */ = {isa = PBXBuildFile; productRef = 9EB8EA1B2F60600000D307C8 /* CryptoSwift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -78,6 +79,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9EBF7DB02F6331EA0091F343 /* CryptoSwift in Frameworks */,
 				9E1D693B2F60977100608E73 /* Logging in Frameworks */,
 				9EB8EA512F6066EA00D307C8 /* KeychainAccess in Frameworks */,
 				9EB8EA502F6066EA00D307C8 /* SwiftSoup in Frameworks */,
@@ -149,6 +151,7 @@
 				9EB8EA0F2F60600000D307C8 /* SwiftSoup */,
 				9EB8EA102F60600000D307C8 /* KeychainAccess */,
 				9EB8EA192F60600000D307C8 /* Logging */,
+				9EB8EA1B2F60600000D307C8 /* CryptoSwift */,
 			);
 			productName = NGA;
 			productReference = 9EB8E9DC2F605D8E00D307C8 /* NGA.app */;
@@ -237,6 +240,7 @@
 				9EB8EA0C2F60600000D307C8 /* XCRemoteSwiftPackageReference "SwiftSoup" */,
 				9EB8EA0D2F60600000D307C8 /* XCRemoteSwiftPackageReference "KeychainAccess" */,
 				9EB8EA182F60600000D307C8 /* XCRemoteSwiftPackageReference "swift-log" */,
+				9EB8EA1A2F60600000D307C8 /* XCRemoteSwiftPackageReference "CryptoSwift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 9EB8E9DD2F605D8E00D307C8 /* Products */;
@@ -658,6 +662,14 @@
 				minimumVersion = 1.0.0;
 			};
 		};
+		9EB8EA1A2F60600000D307C8 /* XCRemoteSwiftPackageReference "CryptoSwift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/CryptoSwift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.8.0;
+			};
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -680,6 +692,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = 9EB8EA182F60600000D307C8 /* XCRemoteSwiftPackageReference "swift-log" */;
 			productName = Logging;
+		};
+		9EB8EA1B2F60600000D307C8 /* CryptoSwift */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 9EB8EA1A2F60600000D307C8 /* XCRemoteSwiftPackageReference "CryptoSwift" */;
+			productName = CryptoSwift;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

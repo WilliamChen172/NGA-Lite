@@ -62,10 +62,19 @@ enum AppTheme {
 
         static let forumGridColumns = [
             GridItem(.flexible(), spacing: 12),
-            GridItem(.flexible(), spacing: 12),
             GridItem(.flexible(), spacing: 12)
         ]
-        
+
+        /// 版块卡片固定高度（横向布局：图标左+名字右）
+        static let forumCardHeight: CGFloat = 64
+        /// 版块卡片图标尺寸
+        static let forumCardIconSize: CGFloat = 40
+
+        /// 首页推荐卡片：图片宽高比（宽:高=2:1）
+        static let recmTopicImageAspectRatio: CGFloat = 2
+        /// 首页推荐卡片：标题区固定高度（两行）
+        static let recmTopicTitleHeight: CGFloat = 48
+
         /// Standard padding for most UI elements (16pt)
         static let standardPadding: CGFloat = 16
         

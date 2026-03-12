@@ -66,4 +66,14 @@ enum KeychainService {
     static func deleteCookies() throws {
         try? keychain.remove(Constants.Keychain.cookieKey)
     }
+
+    private static let deviceIdKey = "nga_native_device_id"
+
+    static func saveDeviceId(_ id: String) throws {
+        try keychain.set(id, key: deviceIdKey)
+    }
+
+    static func getDeviceId() -> String? {
+        try? keychain.get(deviceIdKey)
+    }
 }

@@ -13,6 +13,9 @@ enum Endpoint {
     case homeHasNew
     case homeTagForums
     case homeRecmThreads
+    case homeBannerRecm
+    /// nuke.php 推荐帖子（最新数据，需 auth + app_id=1001）
+    case appInterRecmdTopic
 
     // Subject (forum threads)
     case subjectList
@@ -29,8 +32,8 @@ enum Endpoint {
     case userDetail
     case userDetailName
 
-    // Favor / FavorForum
-    case favorForumSync
+    // Favor
+    case forumFavorGet  // nuke.php, __lib=forum_favor2, __act=get
 
     // Login (nuke.php)
     case login
@@ -39,11 +42,12 @@ enum Endpoint {
 
     var lib: String {
         switch self {
-        case .homeCategory, .homeHasNew, .homeTagForums, .homeRecmThreads: return "home"
+        case .homeCategory, .homeHasNew, .homeTagForums, .homeRecmThreads, .homeBannerRecm: return "home"
+        case .appInterRecmdTopic: return "app_inter"
         case .subjectList, .subjectTopped, .subjectSearch, .subjectHot: return "subject"
         case .postList, .postNew, .postReply: return "post"
         case .userDetail, .userDetailName: return "user"
-        case .favorForumSync: return "favorforum"
+        case .forumFavorGet: return "forum_favor2"
         case .login, .logout, .iflogin: return "login"
         }
     }
@@ -54,6 +58,8 @@ enum Endpoint {
         case .homeHasNew: return "hasnew"
         case .homeTagForums: return "tagforums"
         case .homeRecmThreads: return "recmthreads"
+        case .homeBannerRecm: return "bannerrecm"
+        case .appInterRecmdTopic: return "recmd_topic"
         case .subjectList: return "list"
         case .subjectTopped: return "topped"
         case .subjectSearch: return "search"
@@ -63,7 +69,7 @@ enum Endpoint {
         case .postReply: return "reply"
         case .userDetail: return "detail"
         case .userDetailName: return "detailname"
-        case .favorForumSync: return "sync"
+        case .forumFavorGet: return "get"
         case .login: return "login"      // wolfcon 10.3 客户端登录: __act=login
         case .logout: return "account"
         case .iflogin: return "iflogin"
@@ -72,14 +78,14 @@ enum Endpoint {
 
     var baseURL: String {
         switch self {
-        case .login, .logout, .iflogin: return Constants.API.nukeURL
+        case .login, .logout, .iflogin, .forumFavorGet, .appInterRecmdTopic: return Constants.API.nukeURL
         default: return Constants.API.appAPIURL
         }
     }
 
     var requiresPost: Bool {
         switch self {
-        case .subjectList, .postList, .postNew, .postReply, .login, .logout: return true
+        case .subjectList, .postList, .postNew, .postReply, .login, .logout, .forumFavorGet, .appInterRecmdTopic: return true
         default: return false
         }
     }
@@ -95,8 +101,8 @@ enum Endpoint {
     /// Use __output=14 (standard JSON) for app_api.php and nuke login per NGA doc.
     var useOutput14: Bool {
         switch self {
-        case .logout, .iflogin: return false
-        case .login: return true  // login must request __output=14 to get JSON, not HTML
+        case .logout: return false
+        case .login, .iflogin: return true  // JSON 响应，否则返回 HTML
         default: return true
         }
     }

@@ -41,12 +41,27 @@ actor ForumService: ForumServiceProtocol {
                         name2: nil,
                         description: item.info,
                         parent: group.id,
-                        subForums: nil
+                        subForums: nil,
+                        icon: item.icon
                     ))
                 }
             }
         }
         return forums
+    }
+
+    func getFavorForums() async throws -> [Forum] {
+        do {
+            let list = try await apiClient.requestForumFavorGet()
+            log.info("getFavorForums() -> \(list.count) forums")
+            return list
+        } catch AppError.unauthorized {
+            log.debug("getFavorForums() not logged in, returning []")
+            return []
+        } catch {
+            log.warning("getFavorForums() failed: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     func getForumCategories() async throws -> [ForumCategoryDisplay] {
@@ -74,7 +89,8 @@ actor ForumService: ForumServiceProtocol {
                         name2: nil,
                         description: item.info,
                         parent: group.id,
-                        subForums: nil
+                        subForums: nil,
+                        icon: item.icon
                     )
                 }
                 if !forums.isEmpty {

@@ -14,8 +14,18 @@ struct Forum: Identifiable, Codable, Hashable {
     let description: String?
     let parent: Int?
     let subForums: [Forum]?
+    let icon: String?
 
     var id: Int { fid }
+
+    /// Full URL for forum icon. API may return relative path (e.g. "123.gif") or full URL.
+    var iconURL: URL? {
+        guard let icon = icon, !icon.isEmpty else { return nil }
+        if icon.hasPrefix("http") {
+            return URL(string: icon)
+        }
+        return URL(string: "https://img.nga.178.com/attachments/\(icon)")
+    }
 
     func hash(into hasher: inout Hasher) { hasher.combine(fid) }
     static func == (lhs: Forum, rhs: Forum) -> Bool { lhs.fid == rhs.fid }
@@ -27,6 +37,28 @@ struct Forum: Identifiable, Codable, Hashable {
         case description
         case parent
         case subForums = "sub"
+        case icon
+    }
+
+    init(fid: Int, name: String, name2: String?, description: String?, parent: Int?, subForums: [Forum]?, icon: String?) {
+        self.fid = fid
+        self.name = name
+        self.name2 = name2
+        self.description = description
+        self.parent = parent
+        self.subForums = subForums
+        self.icon = icon
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fid = try c.decode(Int.self, forKey: .fid)
+        name = try c.decode(String.self, forKey: .name)
+        name2 = try c.decodeIfPresent(String.self, forKey: .name2)
+        description = try c.decodeIfPresent(String.self, forKey: .description)
+        parent = try c.decodeIfPresent(Int.self, forKey: .parent)
+        subForums = try c.decodeIfPresent([Forum].self, forKey: .subForums)
+        icon = (try? c.decodeIfPresent(String.self, forKey: .icon)).flatMap { $0 }
     }
 }
 

@@ -134,7 +134,8 @@ struct ThreadListView: View {
                 name2: nil,
                 description: nil,
                 parent: nil,
-                subForums: nil
+                subForums: nil,
+                icon: nil
             ),
             forumService: MockForumService()
         )

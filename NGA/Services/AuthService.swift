@@ -116,6 +116,80 @@ final class AuthService: ObservableObject {
         sourceTabForLogin = nil
     }
 
+    /// Native 登录 (nuke.php, app_id=1100, output=14)。推断 type，AES 加密 password。
+    func loginNative(name: String, password: String) async throws {
+        let loginId = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        log.debug("[loginNative] attempt name=\(loginId)")
+        errorMessage = nil
+
+        let loginType: String
+        if loginId.contains("@") {
+            loginType = "mail"
+        } else if loginId.count == 11, loginId.allSatisfy(\.isNumber) {
+            loginType = "phone"
+        } else if loginId.allSatisfy(\.isNumber) {
+            loginType = "id"
+        } else {
+            loginType = ""
+        }
+        log.debug("[loginNative] loginType=\(loginType.isEmpty ? "id" : loginType)")
+
+        do {
+            let response = try await apiClient.requestNativeLogin(
+                name: loginId,
+                type: loginType.isEmpty ? "id" : loginType,
+                password: password
+            )
+
+            if let data = response["data"] as? [AnyHashable: Any] {
+                let uidVal: Any? = data["1"] ?? data[1]
+                let uid = (uidVal as? Int) ?? (uidVal as? Double).map { Int($0) } ?? 0
+                let cid: String? = (data["2"] ?? data[2]) as? String
+                let userInfo: [String: Any]? = (data["3"] ?? data[3]) as? [String: Any]
+                let usernameFromApi = userInfo?["username"] as? String
+                let avatar = userInfo?["avatar"] as? String
+
+                guard uid > 0, let cid = cid else {
+                    let errMsg = (response["error"] as? [AnyHashable: Any])?["0"] as? String ?? "登录失败"
+                    throw AppError.serverError(code: -1, message: errMsg)
+                }
+
+                let user = User(
+                    uid: uid,
+                    username: usernameFromApi ?? loginId,
+                    nickname: userInfo?["nickname"] as? String,
+                    avatar: avatar
+                )
+                currentUser = user
+                isAuthenticated = true
+                try? KeychainService.saveToken(cid)
+                await apiClient.setAuthToken(cid)
+                try? KeychainService.saveUid(uid)
+                try? KeychainService.saveUserProfile(user)
+                await apiClient.setAccessUid(uid)
+                try? KeychainService.saveCookies("ngaPassportUid=\(uid); ngaPassportCid=\(cid)")
+                log.info("[loginNative] success uid=\(uid)")
+                didCompleteLogin()
+            } else if let error = response["error"] as? [AnyHashable: Any],
+                      let errMsg: String = (error["0"] ?? error[0]) as? String {
+                log.warning("[loginNative] server error: \(errMsg)")
+                throw AppError.serverError(code: -1, message: errMsg)
+            } else {
+                let message = response["msg"] as? String ?? "登录失败"
+                log.warning("[loginNative] unexpected response: \(message)")
+                throw AppError.serverError(code: -1, message: message)
+            }
+        } catch let err as AppError {
+            log.warning("[loginNative] failed: \(err.errorDescription ?? "\(err)")")
+            errorMessage = err.errorDescription
+            throw err
+        } catch {
+            log.warning("[loginNative] failed: \(error.localizedDescription)")
+            errorMessage = error.localizedDescription
+            throw AppError.unknown(error)
+        }
+    }
+
     func login(username: String, password: String) async throws {
         let loginId = username.trimmingCharacters(in: .whitespacesAndNewlines)
         log.debug("[login] attempt name=\(loginId)")

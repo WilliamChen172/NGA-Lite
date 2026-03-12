@@ -411,6 +411,220 @@ actor APIClient {
         return threads
     }
 
+    /// Native 登录 (nuke.php)：app_id=1100, device, password AES 加密，__output=14
+    func requestNativeLogin(name: String, type: String, password: String) async throws -> [String: Any] {
+        guard let encrypted = AESHelper.encryptECBBase64(
+            plainText: password,
+            keyHex: Constants.API.nativeLoginAESKeyHex
+        ) else {
+            log.error("[nativeLogin] AES encrypt failed")
+            throw AppError.decodingFailed
+        }
+        let device = DeviceIdHelper.getOrCreate()
+        var bodyParams: [String: String] = [
+            "__lib": "login",
+            "__act": "login",
+            "__output": "14",
+            "app_id": Constants.API.nativeLoginAppId,
+            "device": device,
+            "name": name,
+            "type": type,
+            "password": encrypted,
+            "__inchst": "UTF-8"
+        ]
+        let bodyStr = bodyParams
+            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
+            .joined(separator: "&")
+
+        guard let url = URL(string: Constants.API.nukeURL) else { throw AppError.decodingFailed }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        request.httpBody = bodyStr.data(using: .utf8)
+        request.setValue(Constants.API.userAgent, forHTTPHeaderField: "User-Agent")
+
+        var curlBody = bodyStr
+            .components(separatedBy: "&")
+            .map { part in part.hasPrefix("password=") ? "password=***REDACTED***" : part }
+            .joined(separator: "&")
+        log.debug("[nativeLogin] curl: curl -X POST '\(Constants.API.nukeURL)' -d '\(curlBody)'")
+        log.debug("[nativeLogin] POST nuke.php name=\(name) type=\(type) device=\(device.prefix(20))...")
+        let (data, response) = try await session.data(for: request)
+        if let http = response as? HTTPURLResponse {
+            log.debug("[nativeLogin] <- \(http.statusCode)")
+        }
+        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
+            let msg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? ""
+            log.error("[nativeLogin] \(http.statusCode) \(msg.prefix(300))")
+            throw AppError.serverError(code: http.statusCode, message: String(msg.prefix(200)))
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            log.error("[nativeLogin] invalid JSON: \(String(data: data, encoding: .utf8)?.prefix(500) ?? "")")
+            throw AppError.decodingFailed
+        }
+        log.debug("[nativeLogin] response OK (\(data.count) bytes)")
+        return json
+    }
+
+    /// forum_favor2 get: POST nuke.php，Cookie/Authorization 鉴权即可，无需 sign
+    func requestForumFavorGet() async throws -> [Forum] {
+        guard authToken != nil, accessUid != nil else {
+            log.warning("[forum_favor2] no token/uid, skipping")
+            throw AppError.unauthorized
+        }
+        let body: [String: String] = ["__output": "14"]
+        let (data, _) = try await perform(endpoint: .forumFavorGet, params: [:], body: body)
+        return parseForumFavorResponse(data)
+    }
+
+    private func parseForumFavorResponse(_ data: Data) -> [Forum] {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] else {
+            log.warning("[forum_favor2] invalid JSON or no result")
+            return []
+        }
+        if let arr = result as? [[String: Any]] {
+            if let first = arr.first, first["groups"] != nil {
+                return arr.flatMap { cat -> [Forum] in
+                    (cat["groups"] as? [[String: Any]])?.flatMap { group -> [Forum] in
+                        (group["forums"] as? [[String: Any]])?.compactMap { forumFromDict($0) } ?? []
+                    } ?? []
+                }
+            }
+            return arr.compactMap { forumFromDict($0) }
+        }
+        if let obj = result as? [String: Any] {
+            return obj.compactMap { _, val -> Forum? in
+                guard let dict = val as? [String: Any] else { return nil }
+                return forumFromDict(dict)
+            }
+        }
+        if let arr = result as? [Any] {
+            // forum_favor2 实际返回 result: [[{fid,name,info,...}, ...]]
+            if let inner = arr.first as? [Any] {
+                return inner.compactMap { item in (item as? [String: Any]).flatMap { forumFromDict($0) } }
+            }
+            return arr.compactMap { item -> Forum? in
+                if let dict = item as? [String: Any] { return forumFromDict(dict) }
+                if let fid = item as? Int { return Forum(fid: fid, name: "版块\(fid)", name2: nil, description: nil, parent: nil, subForums: nil, icon: nil) }
+                if let s = item as? String, let fid = Int(s) { return Forum(fid: fid, name: "版块\(fid)", name2: nil, description: nil, parent: nil, subForums: nil, icon: nil) }
+                return nil
+            }
+        }
+        log.warning("[forum_favor2] unknown result format")
+        return []
+    }
+
+    private func forumFromDict(_ dict: [String: Any]) -> Forum? {
+        guard let fid = (dict["fid"] as? Int) ?? (dict["fid"] as? String).flatMap(Int.init) else { return nil }
+        let name = dict["name"] as? String ?? "版块\(fid)"
+        return Forum(fid: fid, name: name, name2: nil, description: dict["info"] as? String, parent: nil, subForums: nil, icon: dict["icon"] as? String)
+    }
+
+    /// 推荐帖子：app_inter/recmd_topic（result: [[{tid,subject,thread_icon,topic:{...},parent:[fid,forumName]}]])
+    func fetchRecmThreads() async throws -> [HomeRecmTopic] {
+        try await fetchRecmdTopic(page: 1)
+    }
+
+    /// app_inter/recmd_topic: nuke.php 推荐帖子（最新数据）
+    private func fetchRecmdTopic(page: Int = 1) async throws -> [HomeRecmTopic] {
+        var body: [String: String] = [
+            "__output": "14",
+            "app_id": Constants.API.nativeLoginAppId,
+            "page": "\(page)"
+        ]
+        if let token = authToken, let uid = accessUid {
+            body["access_token"] = token
+            body["access_uid"] = "\(uid)"
+        }
+        let (data, _) = try await perform(endpoint: .appInterRecmdTopic, params: [:], body: body)
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AppError.decodingFailed
+        }
+        return parseRecmdTopicResponse(json)
+    }
+
+    /// 解析 recmd_topic 响应：result: [[{tid,subject,thread_icon,topic:{fid,replies,...},topic.parent:[fid,forumName]}]]
+    private func parseRecmdTopicResponse(_ json: [String: Any]) -> [HomeRecmTopic] {
+        guard let result = json["result"] as? [Any],
+              let inner = result.first as? [Any] else {
+            return []
+        }
+        return inner.compactMap { item -> HomeRecmTopic? in
+            guard let dict = item as? [String: Any] else { return nil }
+            let tid = (dict["tid"] as? Int) ?? (dict["target_id"] as? Int)
+                ?? (dict["tid"] as? String).flatMap(Int.init)
+                ?? (dict["target_id"] as? String).flatMap(Int.init)
+            guard let tid = tid else { return nil }
+            let topic = dict["topic"] as? [String: Any]
+            let fid = (dict["fid"] as? Int) ?? (topic?["fid"] as? Int)
+                ?? (dict["fid"] as? String).flatMap(Int.init)
+                ?? 0
+            let subject = dict["subject"] as? String ?? topic?["subject"] as? String ?? ""
+            let authorId = (topic?["authorid"] as? Int) ?? (topic?["authorid"] as? String).flatMap(Int.init)
+            let author = topic?["author"] as? String
+            let postDate = (topic?["postdate"] as? Int) ?? (topic?["postdate"] as? String).flatMap(Int.init)
+            let replyCount = (topic?["replies"] as? Int) ?? (topic?["replies"] as? String).flatMap(Int.init)
+            let lastPost = (topic?["lastpost"] as? Int) ?? (topic?["lastpost"] as? String).flatMap(Int.init)
+            var img = dict["thread_icon"] as? String
+            if img == nil, let attachs = dict["attachs"] as? [[String: Any]], let first = attachs.first, let url = first["attachurl"] as? String {
+                img = url.hasPrefix("http") ? url : "https://img.nga.178.com/attachments/\(url)"
+            }
+            var forumName: String?
+            if let parent = topic?["parent"] as? [Any], parent.count > 1, let name = parent[1] as? String {
+                forumName = name
+            }
+            let thread = ForumThread(tid: tid, fid: fid, subject: subject, authorId: authorId, author: author, postDate: postDate, replyCount: replyCount, lastPost: lastPost)
+            return HomeRecmTopic(thread: thread, imageUrl: img, forumName: forumName)
+        }
+    }
+
+    /// subject/hot: 热帖
+    func fetchHotThreads() async throws -> [HomeRecmTopic] {
+        let json = try await requestJSON(endpoint: .subjectHot)
+        return parseHomeRecmTopics(json)
+    }
+
+    private func extractThreadDictArray(from json: [String: Any]) -> [[String: Any]] {
+        if let a = json["result"] as? [[String: Any]] { return a }
+        if let a = json["data"] as? [[String: Any]] { return a }
+        if let obj = json["result"] as? [String: Any] {
+            if let a = obj["data"] as? [[String: Any]] { return a }
+            if let a = obj["list"] as? [[String: Any]] { return a }
+            if let a = obj["topics"] as? [[String: Any]] { return a }
+            return obj.compactMap { _, v in v as? [String: Any] }
+        }
+        if let obj = json["data"] as? [String: Any] {
+            if let a = obj["data"] as? [[String: Any]] { return a }
+            if let a = obj["list"] as? [[String: Any]] { return a }
+            return obj.compactMap { _, v in v as? [String: Any] }
+        }
+        return []
+    }
+
+    private func parseHomeRecmTopics(_ json: [String: Any]) -> [HomeRecmTopic] {
+        let arr = extractThreadDictArray(from: json)
+        return arr.compactMap { dict -> HomeRecmTopic? in
+            guard let thread = threadFromDict(dict) else { return nil }
+            let img = (dict["img"] as? String) ?? (dict["image"] as? String) ?? (dict["cover"] as? String)
+            let forum = dict["forumname"] as? String ?? dict["forum_name"] as? String
+            return HomeRecmTopic(thread: thread, imageUrl: img, forumName: forum)
+        }
+    }
+
+    private func threadFromDict(_ dict: [String: Any]) -> ForumThread? {
+        guard let tid = (dict["tid"] as? Int) ?? (dict["tid"] as? String).flatMap(Int.init) else { return nil }
+        let fid = (dict["fid"] as? Int) ?? (dict["fid"] as? String).flatMap(Int.init) ?? 0
+        let subject = dict["subject"] as? String ?? dict["title"] as? String ?? ""
+        let authorId = (dict["authorid"] as? Int) ?? (dict["authorid"] as? String).flatMap(Int.init)
+        let author = dict["author"] as? String
+        let postDate = (dict["postdate"] as? Int) ?? (dict["postdate"] as? String).flatMap(Int.init)
+        let replyCount = (dict["reply_count"] as? Int) ?? (dict["replies"] as? Int) ?? (dict["reply_count"] as? String).flatMap(Int.init) ?? (dict["replies"] as? String).flatMap(Int.init)
+        let lastPost = (dict["lastpost"] as? Int) ?? (dict["lastpost"] as? String).flatMap(Int.init)
+        return ForumThread(tid: tid, fid: fid, subject: subject, authorId: authorId, author: author, postDate: postDate, replyCount: replyCount, lastPost: lastPost)
+    }
+
     func requestJSON(
         endpoint: Endpoint,
         params: [String: String] = [:],

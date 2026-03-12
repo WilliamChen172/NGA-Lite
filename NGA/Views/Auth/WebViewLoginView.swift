@@ -74,12 +74,14 @@ private struct WebViewLoginRepresentable: UIViewRepresentable {
 
     class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let parent: WebViewLoginRepresentable
+        private let authService: AuthService
         private let log = Logger.for(.auth)
         private var hasCompleted = false
         private var pollTask: Task<Void, Never>?
 
         init(_ parent: WebViewLoginRepresentable) {
             self.parent = parent
+            self.authService = parent.authService
         }
 
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
@@ -169,9 +171,11 @@ private struct WebViewLoginRepresentable: UIViewRepresentable {
                     self.hasCompleted = true
                     self.pollTask?.cancel()
                     self.log.info("[webview] login success via cookies uid=\(uid)")
+                    let authService = self.authService
+                    let onSuccess = self.parent.onLoginSuccess
                     Task { @MainActor in
-                        await self.parent.authService.completeLoginFromWebView(uid: uid, cid: cidCookie.value)
-                        self.parent.onLoginSuccess()
+                        await authService.completeLoginFromWebView(uid: uid, cid: cidCookie.value)
+                        onSuccess()
                     }
                 }
             }
@@ -181,7 +185,10 @@ private struct WebViewLoginRepresentable: UIViewRepresentable {
             log.debug("[webview] JS alert: \(message.prefix(200))")
             // On success, NGA shows an alert; cookies are already set. Check cookies and swallow alert if login ok.
             cookieStore(for: webView).getAllCookies { [weak self] cookies in
-                guard let self = self else { completionHandler(); return }
+                guard let self = self else { 
+                    DispatchQueue.main.async { completionHandler() }
+                    return 
+                }
                 let ngaUid = cookies.first { $0.name == "ngaPassportUid" }
                 let ngaCid = cookies.first { $0.name == "ngaPassportCid" }
                 if let uidCookie = ngaUid, let cidCookie = ngaCid,
@@ -189,10 +196,12 @@ private struct WebViewLoginRepresentable: UIViewRepresentable {
                     self.hasCompleted = true
                     self.pollTask?.cancel()
                     self.log.info("[webview] login success via alert, uid=\(uid), swallowing alert")
+                    let authService = self.authService
+                    let onSuccess = self.parent.onLoginSuccess
                     DispatchQueue.main.async {
                         Task { @MainActor in
-                            await self.parent.authService.completeLoginFromWebView(uid: uid, cid: cidCookie.value)
-                            self.parent.onLoginSuccess()
+                            await authService.completeLoginFromWebView(uid: uid, cid: cidCookie.value)
+                            onSuccess()
                         }
                         completionHandler()
                     }
@@ -201,12 +210,25 @@ private struct WebViewLoginRepresentable: UIViewRepresentable {
                 // Error or other alert: show it to the user.
                 DispatchQueue.main.async {
                     let ac = UIAlertController(title: "NGA", message: message, preferredStyle: .alert)
-                    ac.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler() })
-                    if let vc = webView.window?.rootViewController {
-                        vc.present(ac, animated: true)
-                    } else {
+                    ac.addAction(UIAlertAction(title: "确定", style: .default) { _ in 
+                        completionHandler() 
+                    })
+                    
+                    // Find the topmost view controller to present the alert
+                    guard let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+                          let window = windowScene.windows.first(where: { $0.isKeyWindow }),
+                          let rootVC = window.rootViewController else {
+                        // Fallback: just call completion handler if we can't present
                         completionHandler()
+                        return
                     }
+                    
+                    var topVC = rootVC
+                    while let presented = topVC.presentedViewController {
+                        topVC = presented
+                    }
+                    
+                    topVC.present(ac, animated: true)
                 }
             }
         }

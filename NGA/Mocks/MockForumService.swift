@@ -14,6 +14,11 @@ actor MockForumService: ForumServiceProtocol {
         return MockData.forums
     }
 
+    func getFavorForums() async throws -> [Forum] {
+        try await Task.sleep(nanoseconds: 200_000_000)
+        return Array(MockData.forums.prefix(3))
+    }
+
     func getForumCategories() async throws -> [ForumCategoryDisplay] {
         try await Task.sleep(nanoseconds: 300_000_000)
         return [

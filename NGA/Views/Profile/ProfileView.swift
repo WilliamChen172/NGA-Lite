@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ProfileView: View {
     @EnvironmentObject var authService: AuthService
+    @State private var showNativeLogin = false
     @State private var showWebViewLogin = false
     
     var body: some View {
@@ -31,6 +32,11 @@ struct ProfileView: View {
         }
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showNativeLogin) {
+            NavigationStack {
+                NativeLoginView(authService: authService)
+            }
+        }
         .sheet(isPresented: $showWebViewLogin) {
             WebViewLoginView(authService: authService) {}
         }
@@ -47,21 +53,26 @@ struct ProfileView: View {
                 Text("登录后查看更多内容")
                     .font(.system(size: AppTheme.FontSize.body))
                     .foregroundColor(.secondary)
-                
-                Text("使用网页登录，支持图形验证码")
-                    .font(.system(size: AppTheme.FontSize.caption))
-                    .foregroundColor(.secondary)
-                
+
                 Button {
-                    showWebViewLogin = true
+                    showNativeLogin = true
                 } label: {
-                    Text("使用网页登录")
+                    Text("客户端登录")
                         .font(.system(size: AppTheme.FontSize.body, weight: .semibold))
                         .foregroundColor(.white)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                         .background(AppTheme.Colors.accent)
                         .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    showWebViewLogin = true
+                } label: {
+                    Text("网页登录（支持验证码）")
+                        .font(.system(size: AppTheme.FontSize.caption))
+                        .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
                 .padding(.bottom, AppTheme.Layout.standardPadding)
