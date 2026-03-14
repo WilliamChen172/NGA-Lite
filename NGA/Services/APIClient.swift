@@ -32,30 +32,95 @@ actor APIClient {
         accessUid = uid
     }
 
-    /// Fetches thread list from thread.php. MNGA-style: POST, __inchst=UTF8.
-    /// orderBy: "lastpostdesc" (last reply first) or "postdatedesc" (newest first). Default lastpostdesc.
-    /// Tries primary baseURL first, then alternates if needed.
-    /// Response: window.script_muti_get_var_store={"data":{"__T":{"0":{...}}}}
+    /// Logged in: app_api subject/list. Logged out: thread.php (MNGA-style, JSON).
     func fetchThreadList(fid: Int, page: Int, orderBy: String = Constants.API.orderByLastPost, recommendOnly: Bool = false) async throws -> [ForumThread] {
+        if isLoggedIn {
+            return try await fetchThreadListLoggedIn(fid: fid, page: page, orderBy: orderBy, recommendOnly: recommendOnly)
+        } else {
+            return try await fetchThreadListLoggedOut(fid: fid, page: page, orderBy: orderBy, recommendOnly: recommendOnly)
+        }
+    }
+
+    /// Logged in: app_api post/list. Logged out: read.php (MNGA-style, JSON).
+    func fetchPostList(tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        if isLoggedIn {
+            return try await fetchPostListLoggedIn(tid: tid, page: page)
+        } else {
+            return try await fetchPostListLoggedOut(tid: tid, page: page)
+        }
+    }
+
+    private var isLoggedIn: Bool {
+        authToken != nil && accessUid != nil
+    }
+
+    // MARK: - Logged in (app_api)
+
+    private func fetchThreadListLoggedIn(fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [ForumThread] {
+        var body: [String: String] = [
+            "fid": "\(fid)",
+            "page": "\(page)",
+            "order_by": orderBy,
+            "app_id": Constants.API.nativeLoginAppId
+        ]
+        if recommendOnly { body["recommend"] = "1" }
+        let json = try await requestJSON(endpoint: .subjectList, params: [:], body: body)
+        let threads = try parseSubjectListResponse(json)
+        log.debug("[subject/list] fid=\(fid) page=\(page) -> \(threads.count) threads")
+        return threads
+    }
+
+    private func fetchPostListLoggedIn(tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        let body: [String: String] = [
+            "tid": "\(tid)",
+            "page": "\(page)",
+            "app_id": Constants.API.nativeLoginAppId
+        ]
+        let json = try await requestJSON(endpoint: .postList, params: [:], body: body)
+        let result = try parsePostListAppAPI(json)
+        log.debug("[post/list] tid=\(tid) page=\(page) -> \(result.posts.count) posts")
+        return result
+    }
+
+    // MARK: - Logged out (thread.php / read.php, MNGA-style, JSON)
+
+    private func fetchThreadListLoggedOut(fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [ForumThread] {
         let bases = [Constants.API.baseURL] + Constants.API.alternateBaseURLs
         var lastError: Error?
         for base in bases {
-            let threadURL = "\(base)/thread.php"
             do {
-                let threads = try await fetchThreadListFrom(baseURL: base, threadURL: threadURL, fid: fid, page: page, orderBy: orderBy, recommendOnly: recommendOnly)
-                log.debug("[thread.php] fid=\(fid) page=\(page) -> \(threads.count) threads (base: \(base))")
+                let json = try await fetchThreadPhpJSON(baseURL: base, fid: fid, page: page, orderBy: orderBy, recommendOnly: recommendOnly)
+                let threads = try parseThreadListFromThreadPhp(json)
+                log.debug("[thread.php] fid=\(fid) page=\(page) -> \(threads.count) threads (unauth)")
                 return threads
             } catch {
                 lastError = error
-                log.warning("[thread.php] failed for \(base): \(error.localizedDescription)")
+                log.warning("[thread.php] unauth failed for \(base): \(error.localizedDescription)")
             }
         }
         throw lastError ?? AppError.decodingFailed
     }
 
-    private func fetchThreadListFrom(baseURL: String, threadURL: String, fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [ForumThread] {
-        guard let url = URL(string: threadURL) else { throw AppError.decodingFailed }
-        var bodyParams: [String: String] = [
+    private func fetchPostListLoggedOut(tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        let bases = [Constants.API.baseURL] + Constants.API.alternateBaseURLs
+        var lastError: Error?
+        for base in bases {
+            do {
+                let json = try await fetchReadPhpJSON(baseURL: base, tid: tid, page: page)
+                let result = try parsePostListFromReadPhp(json)
+                log.debug("[read.php] tid=\(tid) page=\(page) -> \(result.posts.count) posts (unauth)")
+                return result
+            } catch {
+                lastError = error
+                log.warning("[read.php] unauth failed for \(base): \(error.localizedDescription)")
+            }
+        }
+        throw lastError ?? AppError.decodingFailed
+    }
+
+    private func fetchThreadPhpJSON(baseURL: String, fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [String: Any] {
+        let url = "\(baseURL)/thread.php"
+        var body: [String: String] = [
             "fid": "\(fid)",
             "page": "\(page)",
             "__inchst": "UTF8",
@@ -63,87 +128,26 @@ actor APIClient {
             "order_by": orderBy,
             "recommend": recommendOnly ? "1" : "0"
         ]
-        if let token = authToken {
-            bodyParams["access_token"] = token
-        }
-        if let uid = accessUid {
-            bodyParams["access_uid"] = "\(uid)"
-        }
-        let bodyStr = bodyParams
-            .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
-            .joined(separator: "&")
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.httpBody = bodyStr.data(using: .utf8)
-        request.setValue("NGA_skull/7.3.1(iPhone; iOS)", forHTTPHeaderField: "User-Agent")
-        request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
-        if let token = authToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
-
-        log.debug("[thread.php] POST fid=\(fid) page=\(page) -> \(url.absoluteString)")
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
-            if http.statusCode == 401 {
-                log.warning("[thread.php] 401 Unauthorized")
-                NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
-                throw AppError.unauthorized
-            }
-            if http.statusCode == 403, rawMsg.contains("未登录") || rawMsg.contains("登录") {
-                throw AppError.loginRequired
-            }
-            throw AppError.serverError(code: http.statusCode, message: String(rawMsg.prefix(200)))
-        }
-
-        let raw: String
-        if let s = String(data: data, encoding: .utf8) { raw = s }
-        else if let s = decodeGB18030(data) { raw = s }
-        else if let s = String(data: data, encoding: .utf16) { raw = s }
-        else {
-            log.error("[thread.php] response encoding failed")
-            throw AppError.decodingFailed
-        }
-        return try parseThreadListResponse(raw: raw, data: data)
+        let data = try await postToURL(url, body: body)
+        return try parseScriptVarJSON(data)
     }
 
-    /// Fetches post list and author map from read.php. MNGA-style: POST, __inchst=UTF8, lite=js.
-    /// Response: window.script_muti_get_var_store={"data":{"__R":{...},"__U":{...},"__GROUPS":{...}}}
-    func fetchPostList(tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
-        let bases = [Constants.API.baseURL] + Constants.API.alternateBaseURLs
-        var lastError: Error?
-        for base in bases {
-            let readURL = "\(base)/read.php"
-            do {
-                let result = try await fetchPostListFrom(baseURL: base, readURL: readURL, tid: tid, page: page)
-                log.debug("[read.php] tid=\(tid) page=\(page) -> \(result.posts.count) posts, \(result.authorMap.count) authors (base: \(base))")
-                return result
-            } catch {
-                lastError = error
-                log.warning("[read.php] failed for \(base): \(error.localizedDescription)")
-            }
-        }
-        throw lastError ?? AppError.decodingFailed
-    }
-
-    private func fetchPostListFrom(baseURL: String, readURL: String, tid: Int, page: Int) async throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
-        guard let url = URL(string: readURL) else { throw AppError.decodingFailed }
-        var bodyParams: [String: String] = [
+    private func fetchReadPhpJSON(baseURL: String, tid: Int, page: Int) async throws -> [String: Any] {
+        let url = "\(baseURL)/read.php"
+        let body: [String: String] = [
             "tid": "\(tid)",
             "page": "\(page)",
             "__inchst": "UTF8",
-            "__output": "1",
             "lite": "js",
             "v2": "1"
         ]
-        if let token = authToken {
-            bodyParams["access_token"] = token
-        }
-        if let uid = accessUid {
-            bodyParams["access_uid"] = "\(uid)"
-        }
-        let bodyStr = bodyParams
+        let data = try await postToURL(url, body: body)
+        return try parseScriptVarJSON(data)
+    }
+
+    private func postToURL(_ urlString: String, body: [String: String]) async throws -> Data {
+        guard let url = URL(string: urlString) else { throw AppError.decodingFailed }
+        let bodyStr = body
             .map { "\($0.key)=\($0.value.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? $0.value)" }
             .joined(separator: "&")
         var request = URLRequest(url: url)
@@ -151,17 +155,12 @@ actor APIClient {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = bodyStr.data(using: .utf8)
         request.setValue("NGA_WP_JW", forHTTPHeaderField: "User-Agent")
-        request.setValue(url.absoluteString, forHTTPHeaderField: "Referer")
-        if let token = authToken {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
+        request.setValue(urlString, forHTTPHeaderField: "Referer")
 
-        log.debug("[read.php] POST tid=\(tid) page=\(page) -> \(url.absoluteString)")
         let (data, response) = try await session.data(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode >= 400 {
-            let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? String(data: data, encoding: .utf16) ?? ""
+            let rawMsg = String(data: data, encoding: .utf8) ?? decodeGB18030(data) ?? ""
             if http.statusCode == 401 {
-                log.warning("[read.php] 401 Unauthorized")
                 NotificationCenter.default.post(name: Constants.NotificationName.unauthorized, object: nil)
                 throw AppError.unauthorized
             }
@@ -170,16 +169,129 @@ actor APIClient {
             }
             throw AppError.serverError(code: http.statusCode, message: String(rawMsg.prefix(200)))
         }
+        return data
+    }
 
-        let raw: String
-        if let s = String(data: data, encoding: .utf8) { raw = s }
-        else if let s = decodeGB18030(data) { raw = s }
-        else if let s = String(data: data, encoding: .utf16) { raw = s }
-        else {
-            log.error("[read.php] response encoding failed")
+    private func parseScriptVarJSON(_ data: Data) throws -> [String: Any] {
+        let candidates: [(String, String)] = [
+            ("UTF-8", String(data: data, encoding: .utf8) ?? ""),
+            ("GB18030", decodeGB18030(data) ?? "")
+        ].compactMap { enc, s in s.isEmpty ? nil : (enc, s) }
+
+        for (encoding, raw) in candidates {
+            var r = raw
+            if r.hasPrefix("\u{FEFF}") { r = String(r.dropFirst(1)) }
+            r = r.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            let jsonStr: String
+            if let extracted = extractJSONFromScriptVar(r, prefix: "window.script_muti_get_var_store=") {
+                jsonStr = extracted
+            } else if let idx = r.firstIndex(of: "{"), let extracted = extractJSONByBraceMatch(String(r[idx...])) {
+                jsonStr = extracted
+            } else if r.trimmingCharacters(in: .whitespaces).hasPrefix("{") {
+                jsonStr = r.trimmingCharacters(in: .whitespaces)
+            } else if r.contains("window.script_muti_get_var_store=") {
+                let start = r.range(of: "window.script_muti_get_var_store=")!
+                let after = String(r[start.upperBound...])
+                jsonStr = extractJSONFromScriptVar("window.script_muti_get_var_store=" + after, prefix: "window.script_muti_get_var_store=") ?? extractJSONByBraceMatch(after) ?? after
+            } else {
+                continue
+            }
+
+            let sanitized = sanitizeJSONControlChars(jsonStr)
+            guard let parseData = sanitized.data(using: .utf8) else { continue }
+            do {
+                guard let json = try JSONSerialization.jsonObject(with: parseData) as? [String: Any],
+                      json["data"] != nil || json["result"] != nil else {
+                    continue
+                }
+                return json
+            } catch {
+                let nsErr = error as NSError
+                let idx = (nsErr.userInfo["NSJSONSerializationErrorIndex"] as? NSNumber)?.intValue ?? 0
+                let len = sanitized.count
+                let utf8Bytes = sanitized.utf8.count
+                let start = idx > len ? max(0, len - 250) : max(0, min(idx - 80, len - 1))
+                let snippet: String
+                if len > 0, let iStart = sanitized.index(sanitized.startIndex, offsetBy: start, limitedBy: sanitized.endIndex) {
+                    let take = min(250, len - start)
+                    let iEnd = sanitized.index(iStart, offsetBy: take, limitedBy: sanitized.endIndex) ?? sanitized.endIndex
+                    snippet = String(sanitized[iStart..<iEnd])
+                        .replacingOccurrences(of: "\n", with: "\\n")
+                        .replacingOccurrences(of: "\r", with: "\\r")
+                } else {
+                    snippet = "len=\(len) idx=\(idx)"
+                }
+                log.warning("[parseScriptVarJSON] \(encoding) JSON error: \(nsErr.localizedDescription)")
+                log.warning("[parseScriptVarJSON] idx=\(idx) chars=\(len) utf8=\(utf8Bytes) | ...\(snippet)...")
+                continue
+            }
+        }
+
+        let sample = String(data: data.prefix(300), encoding: .utf8) ?? String(data: data.prefix(300), encoding: .utf16) ?? "<binary>"
+        log.error("[parseScriptVarJSON] failed, \(data.count)B, sample: \(sample)...")
+        throw AppError.decodingFailed
+    }
+
+    /// Extracts top-level JSON object by brace matching from a string that may have trailing content.
+    private func extractJSONByBraceMatch(_ s: String) -> String? {
+        guard let i = s.firstIndex(of: "{") else { return nil }
+        var depth = 0
+        var inString = false
+        var escape = false
+        var quote: Character?
+        var idx = s.startIndex
+        while idx < s.endIndex {
+            let c = s[idx]
+            if escape { escape = false } else if c == "\\" && inString { escape = true }
+            else if inString { if c == quote { inString = false; quote = nil } }
+            else if c == "\"" || c == "'" { inString = true; quote = c }
+            else if c == "{" { depth += 1 }
+            else if c == "}" { depth -= 1; if depth == 0 { return String(s[i...idx]) } }
+            idx = s.index(after: idx)
+        }
+        return nil
+    }
+
+    private func parseThreadListFromThreadPhp(_ json: [String: Any]) throws -> [ForumThread] {
+        if isLoginRequiredResponse(json) { throw AppError.loginRequired }
+        let dataObj = json["data"] as? [String: Any]
+        var tObj = dataObj?["__T"] as? [String: Any]
+        if tObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
+            tObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
+        }
+        guard let t = tObj, !t.isEmpty else {
+            if dataObj != nil && dataObj?["__T"] == nil { return [] }
             throw AppError.decodingFailed
         }
-        return try parsePostListResponse(raw: raw)
+        var threads: [ForumThread] = []
+        for key in t.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
+            guard let threadDict = t[key] as? [String: Any],
+                  let thread = threadFromDict(threadDict) else { continue }
+            threads.append(thread)
+        }
+        return threads
+    }
+
+    private func parsePostListFromReadPhp(_ json: [String: Any]) throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        if isLoginRequiredResponse(json) { throw AppError.loginRequired }
+        let dataObj = json["data"] as? [String: Any]
+        var rObj = dataObj?["__R"] as? [String: Any]
+        if rObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
+            rObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
+        }
+        guard let r = rObj, !r.isEmpty else {
+            if dataObj != nil && dataObj?["__R"] == nil { return (posts: [], authorMap: [:]) }
+            throw AppError.decodingFailed
+        }
+        var posts: [Post] = []
+        for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
+            guard let postDict = r[key] as? [String: Any], let post = postFromDict(postDict) else { continue }
+            posts.append(post)
+        }
+        let fid = posts.first?.fid ?? 0
+        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
+        return (posts, authorMap)
     }
 
     /// Vote on a post. value: 1 = 点赞, 2 = 点踩. value: 1 = 点赞 (upvote), 2 = 点踩 (downvote). MNGA uses nuke topic_recommend add.
@@ -224,62 +336,7 @@ actor APIClient {
         return delta
     }
 
-    private func parsePostListResponse(raw: String) throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
-        let trimmedRaw = raw.hasPrefix("\u{FEFF}") ? String(raw.dropFirst(1)) : raw
-        guard let jsonStr = extractJSONFromScriptVar(trimmedRaw, prefix: "window.script_muti_get_var_store=") else {
-            log.error("[read.php] extractJSON failed, body prefix: \(raw.prefix(300))")
-            throw AppError.decodingFailed
-        }
-        // NGA returns JSON with raw control chars (tab, newline) in string values - fix before parsing
-        let sanitized = sanitizeJSONControlChars(jsonStr)
-        guard let jsonData = sanitized.data(using: .utf8) else {
-            log.error("[read.php] jsonStr.data(using:.utf8) failed, len=\(jsonStr.count)")
-            throw AppError.decodingFailed
-        }
-        let root: [String: Any]
-        do {
-            guard let obj = try JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                log.error("[read.php] root cast failed")
-                throw AppError.decodingFailed
-            }
-            root = obj
-        } catch {
-            log.error("[read.php] JSONSerialization failed: \(error), body len=\(jsonData.count), prefix: \(String(data: jsonData.prefix(200), encoding: .utf8) ?? "?")")
-            throw AppError.decodingFailed
-        }
-
-        if isLoginRequiredResponse(root) {
-            log.info("[read.php] login required for tid")
-            throw AppError.loginRequired
-        }
-
-        let dataObj = root["data"] as? [String: Any]
-        var rObj = dataObj?["__R"] as? [String: Any]
-        if rObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
-            rObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
-        }
-        guard let r = rObj, !r.isEmpty else {
-            if dataObj != nil && (dataObj?["__R"] == nil) {
-                return (posts: [], authorMap: [:])
-            }
-            log.error("[read.php] no __R, body prefix: \(raw.prefix(300))")
-            throw AppError.decodingFailed
-        }
-
-        var posts: [Post] = []
-        for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
-            guard let postDict = r[key] as? [String: Any],
-                  let postData = try? JSONSerialization.data(withJSONObject: postDict) else { continue }
-            if let post = try? decoder.decode(Post.self, from: postData) {
-                posts.append(post)
-            }
-        }
-        let fid = posts.first?.fid ?? 0
-        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
-        return (posts: posts, authorMap: authorMap)
-    }
-
-    /// Parses __U and __GROUPS from read.php into [uid: UserInForum].
+    /// Parses __U and __GROUPS from app_api/read.php into [uid: UserInForum].
     /// __GROUPS may be inside __U or a sibling of __U under data.
     private func parseAuthorMap(dataObj: [String: Any]?, fid: Int) -> [Int: UserInForum] {
         guard let uObj = dataObj?["__U"] as? [String: Any] else { return [:] }
@@ -326,12 +383,72 @@ actor APIClient {
         return false
     }
 
-    /// Replaces raw control chars in JSON string values. NGA read.php returns unescaped tab/newline in content.
+    /// Replaces raw control chars in JSON string values. NGA read.php returns unescaped tab/newline/quote in content.
     private func sanitizeJSONControlChars(_ json: String) -> String {
         var result = json
         result = result.replacingOccurrences(of: "\u{09}", with: "\\t")   // tab
         result = result.replacingOccurrences(of: "\u{0A}", with: "\\n")   // newline
         result = result.replacingOccurrences(of: "\u{0D}", with: "\\r")   // carriage return
+        // Remove trailing commas before } or ] (invalid in strict JSON, NGA sometimes returns them)
+        while result.contains(",}") || result.contains(",]") {
+            result = result.replacingOccurrences(of: ",}", with: "}")
+            result = result.replacingOccurrences(of: ",]", with: "]")
+        }
+        // Escape unescaped " inside string values (NGA post content often has literal quotes)
+        result = escapeUnescapedQuotesInJSONStrings(result)
+        return result
+    }
+
+    /// Fixes unescaped double-quotes inside JSON string values. NGA content has [url="..."] where "
+    /// is not escaped. Only treat " as closing when next non-WS is : , } or " (NOT ] - content has ]).
+    private func escapeUnescapedQuotesInJSONStrings(_ json: String) -> String {
+        var result = ""
+        var i = json.startIndex
+        var inString = false
+        var escape = false
+
+        while i < json.endIndex {
+            let c = json[i]
+
+            if escape {
+                result.append(c)
+                escape = false
+            } else if c == "\\" && inString {
+                result.append(c)
+                escape = true
+            } else if c == "\"" {
+                if inString {
+                    var j = json.index(after: i)
+                    while j < json.endIndex {
+                        let ch = json[j]
+                        if ch == " " || ch == "\t" || ch == "\n" || ch == "\r" {
+                            j = json.index(after: j)
+                        } else {
+                            break
+                        }
+                    }
+                    if j < json.endIndex {
+                        let next = json[j]
+                        if next == ":" || next == "," || next == "}" || next == "\"" {
+                            result.append(c)
+                            inString = false
+                        } else {
+                            result.append("\\")
+                            result.append(c)
+                        }
+                    } else {
+                        result.append(c)
+                        inString = false
+                    }
+                } else {
+                    result.append(c)
+                    inString = true
+                }
+            } else {
+                result.append(c)
+            }
+            i = json.index(after: i)
+        }
         return result
     }
 
@@ -373,42 +490,108 @@ actor APIClient {
         return nil
     }
 
-    private func parseThreadListResponse(raw: String, data: Data) throws -> [ForumThread] {
-        let trimmedRaw = raw.hasPrefix("\u{FEFF}") ? String(raw.dropFirst(1)) : raw
-        guard let jsonStr = extractJSONFromScriptVar(trimmedRaw, prefix: "window.script_muti_get_var_store=") else {
-            log.error("[thread.php] extractJSON failed, body prefix: \(raw.prefix(300))")
-            throw AppError.decodingFailed
+    private func parseSubjectListResponse(_ json: [String: Any]) throws -> [ForumThread] {
+        if let code = (json["code"] as? Int) ?? (json["code"] as? String).flatMap(Int.init), code != 0 {
+            let msg = json["msg"] as? String ?? "未知错误"
+            if msg.contains("未登录") || msg.contains("登录") { throw AppError.loginRequired }
+            throw AppError.serverError(code: code, message: msg)
         }
-        let sanitized = sanitizeJSONControlChars(jsonStr)
-        guard let jsonData = sanitized.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-            log.error("[thread.php] parse failed, body prefix: \(raw.prefix(300))")
-            throw AppError.decodingFailed
+        // Prefer threadFromDict to extract img/cover from subject/list (decoder skips extra keys)
+        let arr = extractThreadDictArray(from: json)
+        let threads = arr.compactMap { threadFromDict($0) }
+        if !threads.isEmpty { return threads }
+        // Fallback: decoder
+        if let resp = try? decoder.decode(ThreadListResponse.self, from: JSONSerialization.data(withJSONObject: json)),
+           !resp.threadsList.isEmpty {
+            return resp.threadsList
         }
-        if isLoginRequiredResponse(root) {
-            log.info("[thread.php] login required for fid")
-            throw AppError.loginRequired
-        }
+        return []
+    }
 
-        let dataObj = root["data"] as? [String: Any]
-        var tObj = dataObj?["__T"] as? [String: Any]
-        if tObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
-            tObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
+    private func parsePostListAppAPI(_ json: [String: Any]) throws -> (posts: [Post], authorMap: [Int: UserInForum]) {
+        if let code = (json["code"] as? Int) ?? (json["code"] as? String).flatMap(Int.init), code != 0 {
+            let msg = json["msg"] as? String ?? "未知错误"
+            if msg.contains("未登录") || msg.contains("登录") { throw AppError.loginRequired }
+            throw AppError.serverError(code: code, message: msg)
         }
-        guard let t = tObj, !t.isEmpty else {
-            if dataObj != nil && (dataObj?["__T"] == nil) { return [] }
-            log.error("[thread.php] no __T, body prefix: \(raw.prefix(300))")
-            throw AppError.decodingFailed
-        }
-        var threads: [ForumThread] = []
-        for key in t.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
-            guard let threadDict = t[key] as? [String: Any],
-                  let threadData = try? JSONSerialization.data(withJSONObject: threadDict) else { continue }
-            if let thread = try? decoder.decode(ForumThread.self, from: threadData) {
-                threads.append(thread)
+        // app_api post/list: result is direct array of posts, each with embedded author
+        if let resultArr = json["result"] as? [[String: Any]] {
+            var posts: [Post] = []
+            var authorMap: [Int: UserInForum] = [:]
+            let fid = (json["fid"] as? Int) ?? (json["fid"] as? String).flatMap(Int.init) ?? 0
+            for dict in resultArr {
+                if let post = postFromDict(dict) {
+                    posts.append(post)
+                    if let aid = post.authorId, let authorDict = dict["author"] as? [String: Any],
+                       authorMap[aid] == nil,
+                       let info = userInForumFromAuthorDict(authorDict, fid: fid) {
+                        authorMap[aid] = info
+                    }
+                }
             }
+            return (posts, authorMap)
         }
-        return threads
+        // Legacy: __R / data format (read.php style)
+        var dataObj = (json["result"] as? [String: Any]) ?? (json["data"] as? [String: Any]) ?? json
+        if dataObj["__R"] == nil, let inner = dataObj["data"] as? [String: Any] {
+            dataObj = inner
+        }
+        var rObj = dataObj["__R"] as? [String: Any]
+        if rObj == nil, let items = dataObj["item"] as? [[String: Any]] {
+            rObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
+        }
+        if rObj == nil, let arr = dataObj["data"] as? [[String: Any]] {
+            var posts: [Post] = []
+            for dict in arr {
+                if let post = postFromDict(dict) { posts.append(post) }
+            }
+            let fid = posts.first?.fid ?? 0
+            let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
+            return (posts, authorMap)
+        }
+        guard let r = rObj, !r.isEmpty else {
+            return (posts: [], authorMap: [:])
+        }
+        var posts: [Post] = []
+        for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
+            guard let postDict = r[key] as? [String: Any] else { continue }
+            if let post = postFromDict(postDict) { posts.append(post) }
+        }
+        let fid = posts.first?.fid ?? 0
+        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
+        return (posts, authorMap)
+    }
+
+    /// Build UserInForum from app_api embedded author: { uid, username, avatar, member, postnum, reputation }
+    private func userInForumFromAuthorDict(_ dict: [String: Any], fid: Int) -> UserInForum? {
+        let uid = (dict["uid"] as? Int) ?? (dict["uid"] as? String).flatMap(Int.init)
+        guard let uid = uid else { return nil }
+        let username = dict["username"] as? String
+        let avatar = dict["avatar"] as? String
+        let levelName = dict["member"] as? String
+        let postnum = (dict["postnum"] as? Int) ?? (dict["postnum"] as? String).flatMap(Int.init)
+        let reputation = dict["reputation"] as? String
+        let user = User(uid: uid, username: username, nickname: nil, avatar: avatar)
+        let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, reputation: reputation)
+        return UserInForum(user: user, forumContext: forumContext)
+    }
+
+    private func postFromDict(_ dict: [String: Any]) -> Post? {
+        let pid = (dict["pid"] as? Int) ?? (dict["pid"] as? String).flatMap(Int.init) ?? 0
+        let tid = (dict["tid"] as? Int) ?? (dict["tid"] as? String).flatMap(Int.init) ?? 0
+        let fid = (dict["fid"] as? Int) ?? (dict["fid"] as? String).flatMap(Int.init) ?? 0
+        let content = dict["content"] as? String
+        var authorId = (dict["authorid"] as? Int) ?? (dict["authorid"] as? String).flatMap(Int.init)
+        var author = dict["author"] as? String
+        if authorId == nil || author == nil, let authorObj = dict["author"] as? [String: Any] {
+            authorId = authorId ?? (authorObj["uid"] as? Int) ?? (authorObj["uid"] as? String).flatMap(Int.init)
+            author = author ?? (authorObj["username"] as? String)
+        }
+        let floor = (dict["lou"] as? Int) ?? (dict["floor"] as? Int) ?? (dict["lou"] as? String).flatMap(Int.init) ?? (dict["floor"] as? String).flatMap(Int.init)
+        let postDate = (dict["postdatetimestamp"] as? Int) ?? (dict["postdate"] as? Int) ?? (dict["postdatetimestamp"] as? String).flatMap(Int.init) ?? (dict["postdate"] as? String).flatMap(Int.init)
+        let score = (dict["score"] as? Int) ?? (dict["vote_good"] as? Int) ?? (dict["score"] as? String).flatMap(Int.init) ?? (dict["vote_good"] as? String).flatMap(Int.init)
+        let score2 = (dict["score_2"] as? Int) ?? (dict["vote_bad"] as? Int) ?? (dict["score_2"] as? String).flatMap(Int.init) ?? (dict["vote_bad"] as? String).flatMap(Int.init)
+        return Post(pid: pid, tid: tid, fid: fid, content: content, authorId: authorId, author: author, floor: floor, postDate: postDate, score: score, score2: score2)
     }
 
     /// Native 登录 (nuke.php)：app_id=1100, device, password AES 加密，__output=14
@@ -614,15 +797,67 @@ actor APIClient {
     }
 
     private func threadFromDict(_ dict: [String: Any]) -> ForumThread? {
-        guard let tid = (dict["tid"] as? Int) ?? (dict["tid"] as? String).flatMap(Int.init) else { return nil }
-        let fid = (dict["fid"] as? Int) ?? (dict["fid"] as? String).flatMap(Int.init) ?? 0
-        let subject = dict["subject"] as? String ?? dict["title"] as? String ?? ""
-        let authorId = (dict["authorid"] as? Int) ?? (dict["authorid"] as? String).flatMap(Int.init)
-        let author = dict["author"] as? String
-        let postDate = (dict["postdate"] as? Int) ?? (dict["postdate"] as? String).flatMap(Int.init)
-        let replyCount = (dict["reply_count"] as? Int) ?? (dict["replies"] as? Int) ?? (dict["reply_count"] as? String).flatMap(Int.init) ?? (dict["replies"] as? String).flatMap(Int.init)
-        let lastPost = (dict["lastpost"] as? Int) ?? (dict["lastpost"] as? String).flatMap(Int.init)
-        return ForumThread(tid: tid, fid: fid, subject: subject, authorId: authorId, author: author, postDate: postDate, replyCount: replyCount, lastPost: lastPost)
+        let topic = dict["topic"] as? [String: Any]
+        let tid: Int? = intFrom(dict["tid"]) ?? intFrom(dict["target_id"])
+            ?? intFrom(topic?["tid"])
+        guard let tid = tid else { return nil }
+        let fid = intFrom(dict["fid"]) ?? intFrom(topic?["fid"]) ?? 0
+        let subject = (dict["subject"] as? String) ?? (topic?["subject"] as? String) ?? (dict["title"] as? String) ?? ""
+        let authorId: Int? = intFrom(dict["authorid"]) ?? intFrom(topic?["authorid"])
+        let author = (dict["author"] as? String) ?? (topic?["author"] as? String)
+        let postDate: Int? = intFrom(dict["postdate"]) ?? intFrom(topic?["postdate"])
+        let replyCount: Int? = intFrom(dict["reply_count"]) ?? intFrom(dict["replies"])
+            ?? intFrom(topic?["reply_count"]) ?? intFrom(topic?["replies"])
+        let lastPost: Int? = intFrom(dict["lastpost"]) ?? intFrom(topic?["lastpost"])
+        let (firstImageUrl, imageCount) = extractThreadPreviewImage(dict)
+        return ForumThread(tid: tid, fid: fid, subject: subject, authorId: authorId, author: author, postDate: postDate, replyCount: replyCount, lastPost: lastPost, firstImageUrl: firstImageUrl, imageCount: imageCount)
+    }
+
+    private func intFrom(_ value: Any?) -> Int? {
+        guard let v = value else { return nil }
+        if let i = v as? Int { return i }
+        if let s = v as? String { return Int(s) }
+        return nil
+    }
+
+    /// 从 thread dict 提取首图 URL 和图片数量（content 内 [img] + attachs）
+    private func extractThreadPreviewImage(_ dict: [String: Any]) -> (url: String?, count: Int) {
+        let imageBase = "https://img.nga.178.com/attachments/"
+        var firstUrl: String?
+        var count = 0
+        let topic = dict["topic"] as? [String: Any]
+
+        if let content = (dict["content"] as? String) ?? (topic?["content"] as? String) {
+            let urls = PostContentParser.extractImageUrls(from: content)
+            count += urls.count
+            if firstUrl == nil, let u = urls.first { firstUrl = u }
+        }
+        let postMisc = (dict["post_misc_var"] as? [String: Any]) ?? (topic?["post_misc_var"] as? [String: Any])
+        var attachs: [[String: Any]] = (dict["attachs"] as? [[String: Any]]) ?? (topic?["attachs"] as? [[String: Any]]) ?? []
+        if attachs.isEmpty, let a = postMisc?["attachs"] as? [String: Any] {
+            attachs = a.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }).compactMap { a[$0] as? [String: Any] }
+        }
+        if attachs.isEmpty, let a = (dict["attachs"] as? [String: Any]) ?? (topic?["attachs"] as? [String: Any]) {
+            attachs = a.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }).compactMap { a[$0] as? [String: Any] }
+        }
+        for att in attachs {
+            guard (att["type"] as? String) == "img" || (att["type"] as? Int) == 0 else { continue }
+            count += 1
+            if firstUrl == nil, let path = att["attachurl"] as? String {
+                firstUrl = path.hasPrefix("http") ? path : imageBase + path
+            }
+        }
+        if firstUrl == nil {
+            firstUrl = (dict["thread_icon"] as? String)
+                ?? (dict["img"] as? String) ?? (dict["image"] as? String) ?? (dict["cover"] as? String)
+            if firstUrl == nil, let topic = dict["topic"] as? [String: Any] {
+                firstUrl = (topic["thread_icon"] as? String)
+                    ?? (topic["img"] as? String) ?? (topic["image"] as? String) ?? (topic["cover"] as? String)
+            }
+            if let u = firstUrl, !u.hasPrefix("http") { firstUrl = imageBase + u }
+        }
+        if firstUrl != nil, count == 0 { count = 1 }
+        return (firstUrl, count)
     }
 
     func requestJSON(

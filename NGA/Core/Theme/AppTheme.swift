@@ -95,6 +95,11 @@ enum AppTheme {
         
         /// Avatar size for thread lists (32pt)
         static let threadAvatarSize: CGFloat = 32
+
+        /// 帖子列表图片预览：最大高度
+        static let threadPreviewImageMaxHeight: CGFloat = 120
+        /// 帖子列表图片预览：圆角半径
+        static let threadPreviewImageCornerRadius: CGFloat = 4
     }
     
     enum FontSize {

@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-03-14
+
+### 帖子内容解析与展示
+
+- **PostContentParser**：BBCode + HTML 解析器
+  - 支持 [b]、[url]、[img]、[quote] 等 BBCode
+  - 简单 HTML（`<b>`/`<i>`/`<u>`）转为 BBCode
+  - 自闭合 NGA 表情 `[s:a2:xxx]` 替换为空
+  - `extractImageUrls`：从 content 提取图片 URL
+- **PostContentView**：富文本渲染组件，quote 引用块样式优化
+- **Reply 框**：修复引用内容中 HTML 标签和表情未解析问题
+
+### 主题列表与详情
+
+- **ForumThread**：新增 `firstImageUrl`、`imageCount` 用于列表预览
+- **ThreadRowView**：标题下方显示首图预览 + 多图角标
+- **PostDetailView**：移除「关注」按钮
+
+---
+
 ## 2026-03-13
 
 ### 首页推荐 / 热帖

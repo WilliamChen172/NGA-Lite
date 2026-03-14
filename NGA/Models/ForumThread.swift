@@ -16,10 +16,12 @@ struct ForumThread: Identifiable, Codable, Hashable {
     let postDate: Int?
     let replyCount: Int?
     let lastPost: Int?
+    let firstImageUrl: String?
+    let imageCount: Int
 
     var id: Int { tid }
 
-    init(tid: Int, fid: Int, subject: String, authorId: Int?, author: String?, postDate: Int?, replyCount: Int?, lastPost: Int?) {
+    init(tid: Int, fid: Int, subject: String, authorId: Int?, author: String?, postDate: Int?, replyCount: Int?, lastPost: Int?, firstImageUrl: String? = nil, imageCount: Int = 0) {
         self.tid = tid
         self.fid = fid
         self.subject = subject
@@ -28,6 +30,8 @@ struct ForumThread: Identifiable, Codable, Hashable {
         self.postDate = postDate
         self.replyCount = replyCount
         self.lastPost = lastPost
+        self.firstImageUrl = firstImageUrl
+        self.imageCount = imageCount
     }
 
     func hash(into hasher: inout Hasher) { hasher.combine(tid) }
@@ -56,6 +60,8 @@ struct ForumThread: Identifiable, Codable, Hashable {
         replyCount = try c.decodeIfPresent(Int.self, forKey: .replyCount)
             ?? c.decodeIfPresent(Int.self, forKey: .replies)
         lastPost = try c.decodeIfPresent(Int.self, forKey: .lastPost)
+        firstImageUrl = nil
+        imageCount = 0
     }
 
     func encode(to encoder: Encoder) throws {

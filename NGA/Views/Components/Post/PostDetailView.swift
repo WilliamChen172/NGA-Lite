@@ -62,31 +62,13 @@ struct PostDetailView: View {
                 }
                 
                 Spacer()
-                
-                // Follow button
-                Button {
-                    // Follow action - not implemented in MVP
-                } label: {
-                    Text("关注")
-                        .font(.system(size: AppTheme.FontSize.caption))
-                        .foregroundColor(AppTheme.Colors.accent)
-                        .padding(.horizontal, AppTheme.Layout.standardPadding)
-                        .padding(.vertical, 6)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(AppTheme.Colors.accent, lineWidth: 1)
-                        }
-                }
             }
             .padding(.horizontal, AppTheme.Layout.standardPadding)
             .padding(.top, AppTheme.Layout.standardPadding)
             
-            // Post content
+            // Post content (BBCode + HTML entities parsed)
             if let content = post.content {
-                Text(content)
-                    .font(.system(size: AppTheme.FontSize.body))
-                    .foregroundColor(.primary)
-                    .multilineTextAlignment(.leading)
+                PostContentView(content: content)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, AppTheme.Layout.standardPadding)
                     .padding(.top, AppTheme.Layout.mediumSpacing)

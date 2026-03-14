@@ -59,7 +59,7 @@ NGA/
 ├── Mocks/                  # Mock data and services for testing
 ├── Models/                 # Codable domain models
 ├── Services/               # API, auth, forum services + protocols
-├── Utils/                  # Constants, errors, helpers (incl. TimeFormatter)
+├── Utils/                  # Constants, errors, helpers (incl. PostContentParser, TimeFormatter)
 ├── ViewModels/             # @MainActor ObservableObject per screen
 └── Views/
     ├── Root/               # Main tab bar and home tab
@@ -80,7 +80,7 @@ NGA/
         ├── Common/         # ErrorStateView, LoadableView
         ├── Forum/          # ForumCard
         ├── Thread/         # ThreadRowView, TabButton
-        └── Post/           # PostDetailView, PostRowView, PostActionButton
+        └── Post/           # PostDetailView, PostContentView, PostRowView, PostActionButton
 ```
 
 **View placement guidelines:**

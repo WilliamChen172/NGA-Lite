@@ -26,6 +26,8 @@ enum Constants {
         static let nativeLoginAppId = "1100"
         /// AES-128 Key：wolfcon AppSecret 后 16 位
         static let nativeLoginAESKeyHex = "41dcf30175a7a80b"
+        /// Sign 计算用 AppSecret（与 native 登录 key 同源）
+        static let appSecretForSign = "41dcf30175a7a80b"
 
         /// wolfcon 13.1: User-Agent 格式 客户端软件名/版本 (硬件; 操作系统)，硬件+OS 尽量不超过20字节
         static let userAgent = "Rosario.NGA/1.0 (iPhone; iOS)"
