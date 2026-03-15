@@ -118,6 +118,41 @@ actor APIClient {
         throw lastError ?? AppError.decodingFailed
     }
 
+    /// 按 pid 拉取单楼，用于 B1 引用补全。使用 read.php，用法同 tid。
+    func fetchPostByPid(pid: Int) async throws -> Post? {
+        let bases = [Constants.API.baseURL] + Constants.API.alternateBaseURLs
+        var lastError: Error?
+        for base in bases {
+            do {
+                let json = try await fetchReadPhpJSONByPid(baseURL: base, pid: pid)
+                if let post = parseSinglePostFromReadPhp(json) {
+                    log.debug("[read.php] pid=\(pid) -> post \(post.pid)")
+                    return post
+                }
+            } catch {
+                lastError = error
+                log.warning("[read.php] pid=\(pid) failed for \(base): \(error.localizedDescription)")
+            }
+        }
+        if let err = lastError { throw err }
+        return nil
+    }
+
+    private func parseSinglePostFromReadPhp(_ json: [String: Any]) -> Post? {
+        guard !isLoginRequiredResponse(json) else { return nil }
+        let dataObj = json["data"] as? [String: Any]
+        var rObj = dataObj?["__R"] as? [String: Any]
+        if rObj == nil, let items = dataObj?["item"] as? [[String: Any]] {
+            rObj = Dictionary(uniqueKeysWithValues: items.enumerated().map { ("\($0.offset)", $0.element) })
+        }
+        guard let r = rObj, !r.isEmpty else { return nil }
+        for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
+            guard let postDict = r[key] as? [String: Any], let post = postFromDict(postDict) else { continue }
+            return post
+        }
+        return nil
+    }
+
     private func fetchThreadPhpJSON(baseURL: String, fid: Int, page: Int, orderBy: String, recommendOnly: Bool) async throws -> [String: Any] {
         let url = "\(baseURL)/thread.php"
         var body: [String: String] = [
@@ -137,6 +172,18 @@ actor APIClient {
         let body: [String: String] = [
             "tid": "\(tid)",
             "page": "\(page)",
+            "__inchst": "UTF8",
+            "lite": "js",
+            "v2": "1"
+        ]
+        let data = try await postToURL(url, body: body)
+        return try parseScriptVarJSON(data)
+    }
+
+    private func fetchReadPhpJSONByPid(baseURL: String, pid: Int) async throws -> [String: Any] {
+        let url = "\(baseURL)/read.php"
+        let body: [String: String] = [
+            "pid": "\(pid)",
             "__inchst": "UTF8",
             "lite": "js",
             "v2": "1"
@@ -284,13 +331,20 @@ actor APIClient {
             if dataObj != nil && dataObj?["__R"] == nil { return (posts: [], authorMap: [:]) }
             throw AppError.decodingFailed
         }
+        let tObj = dataObj?["__T"] as? [String: Any]
+        let topicAuthor = tObj?["author"] as? String
+        let topicAuthorId = (tObj?["authorid"] as? Int) ?? (tObj?["authorid"] as? String).flatMap { Int($0) }
+
         var posts: [Post] = []
         for key in r.keys.sorted(by: { (Int($0) ?? 0) < (Int($1) ?? 0) }) {
-            guard let postDict = r[key] as? [String: Any], let post = postFromDict(postDict) else { continue }
+            guard let postDict = r[key] as? [String: Any], var post = postFromDict(postDict) else { continue }
+            if post.pid == 0, let author = topicAuthor, (post.author == nil || post.author == "UID:\(post.authorId ?? 0)") {
+                post = Post(pid: post.pid, tid: post.tid, fid: post.fid, content: post.content, authorId: post.authorId, author: author, floor: post.floor, postDate: post.postDate, score: post.score, score2: post.score2, fromClient: post.fromClient)
+            }
             posts.append(post)
         }
         let fid = posts.first?.fid ?? 0
-        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid)
+        let authorMap = parseAuthorMap(dataObj: dataObj, fid: fid, topicAuthorId: topicAuthorId, topicAuthor: topicAuthor)
         return (posts, authorMap)
     }
 
@@ -336,9 +390,11 @@ actor APIClient {
         return delta
     }
 
-    /// Parses __U and __GROUPS from app_api/read.php into [uid: UserInForum].
-    /// __GROUPS may be inside __U or a sibling of __U under data.
-    private func parseAuthorMap(dataObj: [String: Any]?, fid: Int) -> [Int: UserInForum] {
+    /// Parses __U and __GROUPS from read.php / app_api into [uid: UserInForum].
+    /// - __GROUPS: 级别名取自 groupsObj[memberid]["0"]（字典）或首元素（数组）
+    /// - 威望: 使用 fame，展示时 ÷10（与 MNGA/nuke.php 一致）
+    /// - topicAuthorId/author: 主楼作者名来自 __T，未登录时 __U 可能仅 UID:xxx
+    private func parseAuthorMap(dataObj: [String: Any]?, fid: Int, topicAuthorId: Int? = nil, topicAuthor: String? = nil) -> [Int: UserInForum] {
         guard let uObj = dataObj?["__U"] as? [String: Any] else { return [:] }
         let groupsObj = (uObj["__GROUPS"] ?? dataObj?["__GROUPS"]) as? [String: Any]
         var map: [Int: UserInForum] = [:]
@@ -346,19 +402,27 @@ actor APIClient {
             guard !key.hasPrefix("__"), let userDict = val as? [String: Any] else { continue }
             guard let uid = Int(key) else { continue }
 
-            let username = userDict["username"] as? String
+            var username = userDict["username"] as? String
+            if uid == topicAuthorId, let topicName = topicAuthor, (username == nil || username == "UID:\(uid)") {
+                username = topicName
+            }
             let avatar = userDict["avatar"] as? String
             let postnum = (userDict["postnum"] as? Int) ?? (userDict["postnum"] as? String).flatMap { Int($0) }
-            let reputation = userDict["reputation"] as? String
+            let fame = (userDict["fame"] as? Int) ?? (userDict["fame"] as? String).flatMap { Int($0) }
             let memberid = (userDict["memberid"] as? Int) ?? (userDict["memberid"] as? String).flatMap { Int($0) }
 
+            // __GROUPS: {"39":{"0":"用户组名","1":bit,"2":id}}，取 key "0"
             var levelName: String?
-            if let mid = memberid, let g = groupsObj?["\(mid)"] as? [Any], let first = g.first {
-                levelName = "\(first)"
+            if let mid = memberid {
+                if let g = groupsObj?["\(mid)"] as? [String: Any], let name = g["0"] {
+                    levelName = "\(name)"
+                } else if let g = groupsObj?["\(mid)"] as? [Any], let first = g.first {
+                    levelName = "\(first)"
+                }
             }
 
             let user = User(uid: uid, username: username, nickname: nil, avatar: avatar)
-            let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, reputation: reputation)
+            let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, fame: fame)
             map[uid] = UserInForum(user: user, forumContext: forumContext)
         }
         return map
@@ -562,7 +626,7 @@ actor APIClient {
         return (posts, authorMap)
     }
 
-    /// Build UserInForum from app_api embedded author: { uid, username, avatar, member, postnum, reputation }
+    /// Build UserInForum from app_api embedded author: { uid, username, avatar, member, postnum, fame }
     private func userInForumFromAuthorDict(_ dict: [String: Any], fid: Int) -> UserInForum? {
         let uid = (dict["uid"] as? Int) ?? (dict["uid"] as? String).flatMap(Int.init)
         guard let uid = uid else { return nil }
@@ -570,9 +634,9 @@ actor APIClient {
         let avatar = dict["avatar"] as? String
         let levelName = dict["member"] as? String
         let postnum = (dict["postnum"] as? Int) ?? (dict["postnum"] as? String).flatMap(Int.init)
-        let reputation = dict["reputation"] as? String
+        let fame = (dict["fame"] as? Int) ?? (dict["fame"] as? String).flatMap(Int.init)
         let user = User(uid: uid, username: username, nickname: nil, avatar: avatar)
-        let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, reputation: reputation)
+        let forumContext = ForumUserContext(fid: fid, levelName: levelName, postnum: postnum, fame: fame)
         return UserInForum(user: user, forumContext: forumContext)
     }
 
@@ -591,7 +655,8 @@ actor APIClient {
         let postDate = (dict["postdatetimestamp"] as? Int) ?? (dict["postdate"] as? Int) ?? (dict["postdatetimestamp"] as? String).flatMap(Int.init) ?? (dict["postdate"] as? String).flatMap(Int.init)
         let score = (dict["score"] as? Int) ?? (dict["vote_good"] as? Int) ?? (dict["score"] as? String).flatMap(Int.init) ?? (dict["vote_good"] as? String).flatMap(Int.init)
         let score2 = (dict["score_2"] as? Int) ?? (dict["vote_bad"] as? Int) ?? (dict["score_2"] as? String).flatMap(Int.init) ?? (dict["vote_bad"] as? String).flatMap(Int.init)
-        return Post(pid: pid, tid: tid, fid: fid, content: content, authorId: authorId, author: author, floor: floor, postDate: postDate, score: score, score2: score2)
+        let fromClient = dict["from_client"] as? String
+        return Post(pid: pid, tid: tid, fid: fid, content: content, authorId: authorId, author: author, floor: floor, postDate: postDate, score: score, score2: score2, fromClient: fromClient)
     }
 
     /// Native 登录 (nuke.php)：app_id=1100, device, password AES 加密，__output=14

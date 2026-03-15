@@ -10,10 +10,16 @@ import SwiftUI
 struct PostDetailView: View {
     let post: Post
     var authorInfo: UserInForum?
+    var posts: [Post] = []
+    var rowIndex: Int? = nil
+    var fetchPostByPid: ((Int) async throws -> Post?)? = nil
     var onVoteUp: (() -> Void)?
     var onVoteDown: (() -> Void)?
 
-    private var displayName: String { authorInfo?.displayName ?? post.author ?? "匿名" }
+    @State private var displayContent: String?
+
+    /// 优先用 post.author（帖子本身可能带作者名），其次 authorInfo，无则 UID:xxx
+    private var displayName: String { post.author ?? authorInfo?.displayName ?? (post.authorId.map { "UID:\($0)" } ?? "匿名") }
     private var levelText: String { authorInfo?.levelName.map { "级别:\($0)" } ?? "级别:-" }
     private var prestigeText: String {
         guard let n = authorInfo?.displayReputation else { return "威望:-" }
@@ -22,6 +28,14 @@ struct PostDetailView: View {
     private var postCountText: String {
         guard let n = authorInfo?.postnum else { return "发帖:-" }
         return "发帖:\(n)"
+    }
+    
+    /// 根据 from_client 返回设备图标名称
+    private var deviceIconName: String {
+        guard let fc = post.fromClient?.lowercased() else { return "iphone" }
+        if fc.contains("ios") { return "apple.logo" }
+        if fc.contains("android") { return "square.grid.2x2" }
+        return "iphone"
     }
 
     var body: some View {
@@ -32,7 +46,7 @@ struct PostDetailView: View {
                 avatarView
                 
                 // Author info
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 6) {
                         Text(displayName)
                             .font(.system(size: AppTheme.FontSize.body, weight: .medium))
@@ -45,16 +59,20 @@ struct PostDetailView: View {
                         }
                     }
                     
-                    // Metadata: level, prestige, posts
-                    HStack(spacing: AppTheme.Layout.smallSpacing) {
+                    // Metadata: 级别 / 威望 / 发帖
+                    HStack(spacing: AppTheme.Layout.mediumSpacing) {
                         Text(levelText)
                             .font(.system(size: AppTheme.FontSize.caption))
                             .foregroundColor(.secondary)
-                        
+                        Text("·")
+                            .font(.system(size: AppTheme.FontSize.caption))
+                            .foregroundColor(.secondary.opacity(0.6))
                         Text(prestigeText)
                             .font(.system(size: AppTheme.FontSize.caption))
                             .foregroundColor(.secondary)
-                        
+                        Text("·")
+                            .font(.system(size: AppTheme.FontSize.caption))
+                            .foregroundColor(.secondary.opacity(0.6))
                         Text(postCountText)
                             .font(.system(size: AppTheme.FontSize.caption))
                             .foregroundColor(.secondary)
@@ -66,12 +84,23 @@ struct PostDetailView: View {
             .padding(.horizontal, AppTheme.Layout.standardPadding)
             .padding(.top, AppTheme.Layout.standardPadding)
             
-            // Post content (BBCode + HTML entities parsed)
-            if let content = post.content {
-                PostContentView(content: content)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, AppTheme.Layout.standardPadding)
-                    .padding(.top, AppTheme.Layout.mediumSpacing)
+            // Post content (BBCode + HTML entities parsed, B1 引用补全)
+            Group {
+                if let content = displayContent ?? post.content {
+                    PostContentView(content: content)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, AppTheme.Layout.standardPadding)
+                        .padding(.top, AppTheme.Layout.standardSpacing)
+                }
+            }
+            .task(id: post.pid) {
+                guard post.content != nil, fetchPostByPid != nil else { return }
+                let postsByPid = Dictionary(uniqueKeysWithValues: posts.map { ($0.pid, $0) })
+                displayContent = await PostContentParser.completeB1Content(
+                    raw: post.content,
+                    postsByPid: postsByPid,
+                    fetchPostByPid: fetchPostByPid
+                )
             }
             
             // Timestamp
@@ -82,13 +111,14 @@ struct PostDetailView: View {
                         .font(.system(size: AppTheme.FontSize.caption))
                         .foregroundColor(.secondary)
                     
-                    Image(systemName: "iphone")
+                    Image(systemName: deviceIconName)
                         .font(.system(size: AppTheme.FontSize.caption))
                         .foregroundColor(.secondary)
                 }
             }
             .padding(.horizontal, AppTheme.Layout.standardPadding)
-            .padding(.top, AppTheme.Layout.smallSpacing)
+            .padding(.top, AppTheme.Layout.standardSpacing)
+            .padding(.bottom, AppTheme.Layout.smallSpacing)
             
             // Action bar
             HStack(spacing: 32) {
@@ -112,7 +142,7 @@ struct PostDetailView: View {
             .padding(.horizontal, AppTheme.Layout.standardPadding)
             .padding(.vertical, AppTheme.Layout.mediumSpacing)
         }
-        .background(AppTheme.Colors.contentBackground)
+        .background(rowIndex.map { idx in idx == 0 ? AppTheme.Colors.contentBackground : (idx % 2 == 1 ? AppTheme.Colors.postRowOdd : AppTheme.Colors.contentBackground) } ?? AppTheme.Colors.contentBackground)
     }
 
     @ViewBuilder
@@ -182,11 +212,12 @@ struct VoteButton: View {
                 authorId: 1,
                 author: "永结桐心",
                 floor: 1,
-                postDate: Int(Date().timeIntervalSince1970)
+                postDate: Int(Date().timeIntervalSince1970),
+                fromClient: "7 iOS"
             ),
             authorInfo: UserInForum(
                 user: User(uid: 1, username: "永结桐心", nickname: nil, avatar: nil),
-                forumContext: ForumUserContext(fid: 1, levelName: "学徒", postnum: 352, reputation: "61_120")
+                forumContext: ForumUserContext(fid: 1, levelName: "学徒", postnum: 352, fame: 1200)
             )
         )
     }

@@ -50,6 +50,16 @@
 | **方法** | POST |
 | **Body** | tid, page, __inchst=UTF8, lite=js, v2=1 |
 
+**按 pid 获取单楼**：同上 read.php，Body 只传 `pid`（及 __inchst, lite, v2），用法同 tid
+
+**楼内用户信息（read.php data.__U / __GROUPS）**：
+
+| 用途 | 字段 | 说明 |
+|------|------|------|
+| 级别 | `__GROUPS[memberid]["0"]` | 用户组名为字典 key "0"；无则尝试数组首元素 |
+| 威望 | `__U[uid].fame` | 展示值 = fame / 10（与 MNGA、nuke.php 用户信息一致） |
+| 发帖数 | `__U[uid].postnum` | 直接使用 |
+
 ### 2.3 home/category — 论坛分类（共用，登录/未登录均可）
 
 | 项 | 值 |

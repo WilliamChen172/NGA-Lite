@@ -16,7 +16,10 @@
 
 - **ForumThread**：新增 `firstImageUrl`、`imageCount` 用于列表预览
 - **ThreadRowView**：标题下方显示首图预览 + 多图角标
-- **PostDetailView**：移除「关注」按钮
+- **PostDetailView**：移除「关注」按钮；级别/威望/发帖行与正文间距调整
+  - 级别：从 read.php `__GROUPS[memberid]["0"]` 解析（字典或数组兼容）
+  - 威望：使用 `fame`，展示为 fame/10（与 MNGA 一致，不再使用 rvrc/reputation）
+  - 发帖：`postnum`；元数据行增加间距与 · 分隔
 
 ---
 

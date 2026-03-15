@@ -39,15 +39,15 @@ enum MockData {
     static let authorMap: [Int: UserInForum] = [
         7989705: UserInForum(
             user: User(uid: 7989705, username: "lintx", nickname: nil, avatar: nil),
-            forumContext: ForumUserContext(fid: -447601, levelName: "学徒", postnum: 352, reputation: "61_120")
+            forumContext: ForumUserContext(fid: -447601, levelName: "学徒", postnum: 352, fame: 1200)
         ),
         6: UserInForum(
             user: User(uid: 6, username: "路人甲", nickname: nil, avatar: nil),
-            forumContext: ForumUserContext(fid: -447601, levelName: "新兵", postnum: 89, reputation: nil)
+            forumContext: ForumUserContext(fid: -447601, levelName: "新兵", postnum: 89, fame: nil)
         ),
         7: UserInForum(
             user: User(uid: 7, username: "资深玩家", nickname: nil, avatar: nil),
-            forumContext: ForumUserContext(fid: -447601, levelName: "大元帅", postnum: 1250, reputation: "61_500")
+            forumContext: ForumUserContext(fid: -447601, levelName: "大元帅", postnum: 1250, fame: 5000)
         ),
     ]
 
