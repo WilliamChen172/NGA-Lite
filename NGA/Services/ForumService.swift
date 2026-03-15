@@ -123,6 +123,10 @@ actor ForumService: ForumServiceProtocol {
         }
     }
 
+    func fetchPostByPid(pid: Int) async throws -> Post? {
+        try await apiClient.fetchPostByPid(pid: pid)
+    }
+
     func votePost(tid: Int, pid: Int, value: Int) async throws -> Int {
         try await apiClient.votePost(tid: tid, pid: pid, value: value)
     }

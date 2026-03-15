@@ -18,6 +18,7 @@ struct Post: Identifiable, Codable {
     let postDate: Int?
     let score: Int?   // 点赞
     let score2: Int?  // 点踩
+    let fromClient: String? // 发帖端，如 "7 iOS"、"8 Android"
 
     var id: Int { pid != 0 ? pid : -tid } // main post pid=0, use -tid to avoid collision
 
@@ -33,9 +34,10 @@ struct Post: Identifiable, Codable {
         case postDateTimestamp = "postdatetimestamp"
         case score
         case score2 = "score_2"
+        case fromClient = "from_client"
     }
 
-    init(pid: Int, tid: Int, fid: Int, content: String?, authorId: Int?, author: String?, floor: Int?, postDate: Int?, score: Int? = nil, score2: Int? = nil) {
+    init(pid: Int, tid: Int, fid: Int, content: String?, authorId: Int?, author: String?, floor: Int?, postDate: Int?, score: Int? = nil, score2: Int? = nil, fromClient: String? = nil) {
         self.pid = pid
         self.tid = tid
         self.fid = fid
@@ -46,10 +48,11 @@ struct Post: Identifiable, Codable {
         self.postDate = postDate
         self.score = score
         self.score2 = score2
+        self.fromClient = fromClient
     }
 
     func withScores(score: Int?, score2: Int?) -> Post {
-        Post(pid: pid, tid: tid, fid: fid, content: content, authorId: authorId, author: author, floor: floor, postDate: postDate, score: score ?? self.score, score2: score2 ?? self.score2)
+        Post(pid: pid, tid: tid, fid: fid, content: content, authorId: authorId, author: author, floor: floor, postDate: postDate, score: score ?? self.score, score2: score2 ?? self.score2, fromClient: fromClient)
     }
 
     init(from decoder: Decoder) throws {
@@ -119,6 +122,7 @@ struct Post: Identifiable, Codable {
 
         score = (try? c.decode(Int.self, forKey: .score)) ?? (try? c.decode(String.self, forKey: .score)).flatMap { Int($0) }
         score2 = (try? c.decode(Int.self, forKey: .score2)) ?? (try? c.decode(String.self, forKey: .score2)).flatMap { Int($0) }
+        fromClient = try c.decodeIfPresent(String.self, forKey: .fromClient)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -133,5 +137,6 @@ struct Post: Identifiable, Codable {
         try c.encodeIfPresent(postDate, forKey: .postDate)
         try c.encodeIfPresent(score, forKey: .score)
         try c.encodeIfPresent(score2, forKey: .score2)
+        try c.encodeIfPresent(fromClient, forKey: .fromClient)
     }
 }

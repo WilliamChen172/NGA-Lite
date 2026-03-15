@@ -35,6 +35,12 @@ final class ThreadListViewModel: ObservableObject {
     private let forumService: any ForumServiceProtocol
     private var forumId: Int = 0
 
+    /// 按 tid 去重，避免 ForEach 因重复 id 崩溃
+    private func deduplicateThreads(_ list: [ForumThread]) -> [ForumThread] {
+        var seen = Set<Int>()
+        return list.filter { seen.insert($0.tid).inserted }
+    }
+
     init(forumService: any ForumServiceProtocol = ForumService.shared) {
         self.forumService = forumService
     }
@@ -47,7 +53,7 @@ final class ThreadListViewModel: ObservableObject {
         isLoginRequired = false
 
         do {
-            threads = try await forumService.getThreads(forumId: forumId, page: 1, orderBy: sortOrder.rawValue)
+            threads = deduplicateThreads(try await forumService.getThreads(forumId: forumId, page: 1, orderBy: sortOrder.rawValue))
         } catch AppError.loginRequired {
             isLoginRequired = true
             errorMessage = AppError.loginRequired.errorDescription
@@ -67,7 +73,11 @@ final class ThreadListViewModel: ObservableObject {
         do {
             let newThreads = try await forumService.getThreads(forumId: forumId, page: currentPage + 1, orderBy: sortOrder.rawValue)
             if !newThreads.isEmpty {
-                threads.append(contentsOf: newThreads)
+                var existingTids = Set(threads.map(\.tid))
+                let unique = newThreads.filter { existingTids.insert($0.tid).inserted }
+                if !unique.isEmpty {
+                    threads.append(contentsOf: unique)
+                }
                 currentPage += 1
             }
         } catch AppError.loginRequired {

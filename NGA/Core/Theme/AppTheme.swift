@@ -32,6 +32,9 @@ enum AppTheme {
         /// Card/panel backgrounds (same as contentBackground)
         static let cardBackground = Color.white
 
+        /// 帖子列表：1楼起的奇数楼背景（比 default 稍黄一点）
+        static let postRowOdd = Color(red: 0.96, green: 0.91, blue: 0.80)
+
         /// Check-in banner gradient colors
         static let bannerStart = Color(red: 0.3, green: 0.35, blue: 0.45)
         static let bannerEnd = Color(red: 0.25, green: 0.3, blue: 0.4)

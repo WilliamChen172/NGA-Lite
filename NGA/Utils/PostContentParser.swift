@@ -8,6 +8,16 @@
 
 import Foundation
 
+// MARK: - 引用头结构
+
+/// 引用头元数据，用于 B1 补全或引用头可点击
+struct ReplyHeader {
+    let pid: Int
+    let uid: Int?
+    let author: String
+    let date: String
+}
+
 // MARK: - 解析结果类型
 
 /// 解析后的内容片段，供 PostContentView 渲染
@@ -42,8 +52,110 @@ struct PostContentParser {
         s = s.replacingOccurrences(of: "<br>", with: "\n")
         s = s.replacingOccurrences(of: "<br />", with: "\n")
         s = normalizeSimpleHTML(s)
+        let (normalized, _) = extractAndReplaceReplyHeaders(s)
         
-        return parseBBCode(s)
+        return parseBBCode(normalized)
+    }
+    
+    /// 提取并替换 B1/B2 引用头，返回 (归一化字符串, 引用头元数据)
+    /// - B1: content 开头，无 [quote]，替换为可读文本
+    /// - B2: [quote] 内，替换为可读文本
+    static func extractAndReplaceReplyHeaders(_ s: String) -> (normalized: String, replyHeader: ReplyHeader?) {
+        var result = s
+        var header: ReplyHeader?
+        
+        // B1: content 开头 [b]Reply to [pid=...]...Post by [uid=...]...[/uid] (date)[/b]
+        // 经 normalizeSimpleHTML 后已为 [b]
+        let b1Pattern = #"\[b\]Reply to \[pid=(\d+),[^\]]+\]Reply\[/pid\] Post by \[uid=(\d+)\]([^\]]*)\[/uid\] \(([^)]+)\)\[/b\]"#
+        if let b1Regex = try? NSRegularExpression(pattern: b1Pattern),
+           let m = b1Regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)),
+           let pidRange = Range(m.range(at: 1), in: result),
+           let uidRange = Range(m.range(at: 2), in: result),
+           let authorRange = Range(m.range(at: 3), in: result),
+           let dateRange = Range(m.range(at: 4), in: result),
+           let fullRange = Range(m.range, in: result) {
+            let pid = Int(result[pidRange]) ?? 0
+            let uid = Int(result[uidRange])
+            let author = String(result[authorRange])
+            let date = String(result[dateRange])
+            header = ReplyHeader(pid: pid, uid: uid, author: author, date: date)
+            let replacement = "▸ Reply to \(author) (\(date)):\n\n"
+            result.replaceSubrange(fullRange, with: replacement)
+            return (result, header)
+        }
+        
+        // B2: [quote][pid=...]Reply[/pid] [b]Post by [uid=...]...[/uid] (date):[/b]
+        let b2Pattern = #"\[quote\]\[pid=(\d+),[^\]]+\]Reply\[/pid\] \[b\]Post by \[uid=(\d+)\]([^\]]*)\[/uid\] \(([^)]+)\):\[/b\]"#
+        if let b2Regex = try? NSRegularExpression(pattern: b2Pattern),
+           let m = b2Regex.firstMatch(in: result, range: NSRange(result.startIndex..., in: result)),
+           let pidRange = Range(m.range(at: 1), in: result),
+           let uidRange = Range(m.range(at: 2), in: result),
+           let authorRange = Range(m.range(at: 3), in: result),
+           let dateRange = Range(m.range(at: 4), in: result),
+           let fullRange = Range(m.range, in: result) {
+            let pid = Int(result[pidRange]) ?? 0
+            let uid = Int(result[uidRange])
+            let author = String(result[authorRange])
+            let date = String(result[dateRange])
+            header = ReplyHeader(pid: pid, uid: uid, author: author, date: date)
+            let replacement = "[quote]▸ Post by \(author) (\(date)):\n\n"
+            result.replaceSubrange(fullRange, with: replacement)
+        }
+        
+        return (result, header)
+    }
+
+    /// 预处理并提取引用头，供 B1 补全使用。返回 (归一化字符串, 引用头)
+    static func preprocessAndExtractReplyHeader(_ raw: String?) -> (normalized: String, replyHeader: ReplyHeader?) {
+        guard var s = raw, !s.isEmpty else { return (raw ?? "", nil) }
+        s = decodeHTMLEntities(s)
+        s = s.replacingOccurrences(of: "<br/>", with: "\n")
+        s = s.replacingOccurrences(of: "<br>", with: "\n")
+        s = s.replacingOccurrences(of: "<br />", with: "\n")
+        s = normalizeSimpleHTML(s)
+        return extractAndReplaceReplyHeaders(s)
+    }
+
+    /// B1 补全：若为 B1 格式，从 postsByPid 或 fetch 获取被引用内容，合并后返回
+    /// B2 格式（content 已含 [quote]）则直接返回 normalized，不叠加 quote 块
+    static func completeB1Content(
+        raw: String?,
+        postsByPid: [Int: Post],
+        fetchPostByPid: ((Int) async throws -> Post?)?
+    ) async -> String? {
+        guard let raw = raw, !raw.isEmpty else { return raw }
+        let (normalized, header) = preprocessAndExtractReplyHeader(raw)
+        guard let header = header else { return raw }
+        if normalized.hasPrefix("[quote]") {
+            return normalized
+        }
+        var quotedContent = ""
+        if let local = postsByPid[header.pid]?.content {
+            quotedContent = stripNestedQuotes(from: local)
+        } else if let fetch = fetchPostByPid {
+            let raw = (try? await fetch(header.pid))?.content ?? ""
+            quotedContent = stripNestedQuotes(from: raw)
+        }
+        // 只要回复正文，不要 "▸ Reply to xxx" 那行（已在 quote 块内展示）
+        let replyBodyPrefix = "▸ Reply to \(header.author) (\(header.date)):\n\n"
+        let replyBody = normalized.hasPrefix(replyBodyPrefix)
+            ? String(normalized.dropFirst(replyBodyPrefix.count))
+            : normalized
+        let fullContent = "[quote]▸ Post by \(header.author) (\(header.date)):\n\n" + quotedContent + "[/quote]\n\n" + replyBody
+        return fullContent
+    }
+
+    /// 移除 content 中的嵌套 [quote]...[/quote]，只保留该楼层的直接正文（最后一个 [/quote] 之后的部分）
+    private static func stripNestedQuotes(from content: String) -> String {
+        guard let lastClose = content.range(of: "[/quote]", options: .caseInsensitive) else {
+            return content
+        }
+        let after = content[lastClose.upperBound...]
+        let trimmed = after.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return ""
+        }
+        return String(after)
     }
 
     // MARK: - 预处理
@@ -142,6 +254,11 @@ struct PostContentParser {
         guard i < s.endIndex else { return nil }
         let tagEnd = s.index(after: i)
         
+        // 闭合标签 [/xxx] 直接消费，不当作开标签解析
+        if tagName.hasPrefix("/") {
+            return ([], tagEnd)
+        }
+
         let closingTag = "[/\(tagName)]"
         if let closeRange = s.range(of: closingTag, range: tagEnd..<s.endIndex) {
             let inner = String(s[tagEnd..<closeRange.lowerBound])
@@ -184,6 +301,11 @@ struct PostContentParser {
         // 自闭合 NGA 表情标签 [s:a2:偷吃]，无 [/...] 结尾，直接消费并替换为空
         if tagName.hasPrefix("s:") {
             return ([.text("")], tagEnd)
+        }
+        // 未闭合的 [quote]/[collapse]：取剩余内容为 body，避免裸显
+        if tagName.lowercased() == "quote" || tagName.lowercased() == "collapse" {
+            let inner = String(s[tagEnd...])
+            return ([.quote(inner)], s.endIndex)
         }
         return nil
     }

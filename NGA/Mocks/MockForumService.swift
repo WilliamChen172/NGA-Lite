@@ -37,6 +37,10 @@ actor MockForumService: ForumServiceProtocol {
         return MockData.threads
     }
 
+    func fetchPostByPid(pid: Int) async throws -> Post? {
+        MockData.posts.first { $0.pid == pid }
+    }
+
     func votePost(tid: Int, pid: Int, value: Int) async throws -> Int {
         1
     }

@@ -16,7 +16,7 @@ struct User: Identifiable, Codable {
     var id: Int { uid }
 
     var displayName: String {
-        nickname ?? username ?? "User \(uid)"
+        nickname ?? username ?? "UID:\(uid)"
     }
 
     var avatarURL: URL? {

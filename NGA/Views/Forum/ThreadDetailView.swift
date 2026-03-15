@@ -46,10 +46,13 @@ struct ThreadDetailView: View {
                     
                     // Posts list
                     LazyVStack(spacing: 0) {
-                        ForEach(viewModel.posts) { post in
+                        ForEach(Array(viewModel.posts.enumerated()), id: \.element.id) { index, post in
                             PostDetailView(
                                 post: post,
                                 authorInfo: viewModel.authorInfo(for: post),
+                                posts: viewModel.posts,
+                                rowIndex: index,
+                                fetchPostByPid: { pid in try await viewModel.fetchPostByPid(pid: pid) },
                                 onVoteUp: {
                                     if authService.requireAuthFor(.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: true)) {
                                         Task { await viewModel.votePost(postId: post.id, tid: post.tid, pid: post.pid, upvote: true) }

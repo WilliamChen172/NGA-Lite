@@ -16,7 +16,7 @@ struct PostContentView: View {
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(blockLines().enumerated()), id: \.offset) { _, line in
                 lineView(for: line)
             }
@@ -67,6 +67,7 @@ struct PostContentView: View {
             Text(attr)
                 .font(.system(size: AppTheme.FontSize.body))
                 .foregroundColor(.primary)
+                .lineSpacing(6)
         }
     }
     

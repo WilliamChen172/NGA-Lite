@@ -25,6 +25,12 @@ final class ThreadDetailViewModel: ObservableObject {
     private var threadId: Int = 0
     private let log = Logger.for(.forum)
 
+    /// 按 pid 去重，避免 ForEach 因重复 id 崩溃
+    private func deduplicatePosts(_ list: [Post]) -> [Post] {
+        var seen = Set<Int>()
+        return list.filter { seen.insert($0.pid).inserted }
+    }
+
     init(forumService: any ForumServiceProtocol = ForumService.shared) {
         self.forumService = forumService
     }
@@ -38,7 +44,7 @@ final class ThreadDetailViewModel: ObservableObject {
 
         do {
             let result = try await forumService.getThread(threadId: threadId, page: 1)
-            posts = result.posts
+            posts = deduplicatePosts(result.posts)
             authorMap = result.authorMap
         } catch AppError.loginRequired {
             isLoginRequired = true
@@ -59,7 +65,11 @@ final class ThreadDetailViewModel: ObservableObject {
         do {
             let result = try await forumService.getThread(threadId: threadId, page: currentPage + 1)
             if !result.posts.isEmpty {
-                posts.append(contentsOf: result.posts)
+                var existingPids = Set(posts.map(\.pid))
+                let newPosts = result.posts.filter { existingPids.insert($0.pid).inserted }
+                if !newPosts.isEmpty {
+                    posts.append(contentsOf: newPosts)
+                }
                 for (uid, info) in result.authorMap { authorMap[uid] = info }
                 currentPage += 1
             }
@@ -110,5 +120,10 @@ final class ThreadDetailViewModel: ObservableObject {
     func authorInfo(for post: Post) -> UserInForum? {
         guard let uid = post.authorId else { return nil }
         return authorMap[uid]
+    }
+
+    /// 按 pid 拉取单楼，用于 B1 引用补全
+    func fetchPostByPid(pid: Int) async throws -> Post? {
+        try await forumService.fetchPostByPid(pid: pid)
     }
 }
